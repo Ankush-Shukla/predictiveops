@@ -1,0 +1,5 @@
+# Phase 1 runtime dependencies (later phases append: scikit-learn, xgboost, mlflow, fastapi, ...)
+numpy>=1.26
+pandas>=2.1
+pydantic>=2.6
+pydantic-settings>=2.2
