@@ -15,3 +15,7 @@ class DataValidationError(PredictiveOpsError):
 
 class DataGenerationError(PredictiveOpsError):
     """Synthetic data generation failed or was given invalid parameters."""
+
+
+class ModelNotReadyError(PredictiveOpsError):
+    """No champion model is loaded, so predictions are unavailable."""

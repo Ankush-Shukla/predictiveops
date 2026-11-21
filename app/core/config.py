@@ -6,8 +6,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.policies.models import PolicyConfig, RemediationTarget
 
 
 class Settings(BaseSettings):
@@ -24,16 +26,40 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data/generated")
     sqlite_path: Path = Path("data/generated/predictiveops.sqlite")
     prometheus_url: str = "http://localhost:9090"
-    mlflow_tracking_uri: str = "file:./mlruns"
+    mlflow_tracking_uri: str = "sqlite:///artifacts/mlflow.db"
+    mlflow_experiment: str = "predictiveops"
+    mlflow_model_name: str = "predictiveops-failure-model"
+    model_dir: Path = Path("artifacts/models")
 
     # Prediction horizon: the synopsis specifies 15-30 minutes.
     horizon_minutes: int = Field(default=20, ge=15, le=30)
     synthetic_seed: int = 42
 
-    # Remediation safety defaults (used from Phase 6). Dry-run is ON by default.
+    # API
+    api_key: SecretStr | None = None  # if set, write endpoints require header X-API-Key
+    ingest_buffer_minutes: int = Field(default=360, ge=60, le=10080)
+
+    # CI/CD model quality gates (provisional; see PROJECT_STATUS.md).
+    gate_min_f1: float = Field(default=0.70, ge=0, le=1)
+    gate_max_fpr: float = Field(default=0.05, ge=0, le=1)
+
+    # Alert policy and remediation safety. Remediation is OFF and dry-run is ON by default.
+    policy_sustain_alert: int = Field(default=3, ge=1, le=60)
+    policy_sustain_remediate: int = Field(default=5, ge=1, le=120)
+    policy_remediate_threshold: float = Field(default=0.80, ge=0, le=1)
+    remediation_enabled: bool = False
+    remediation_targets: dict[str, RemediationTarget] = Field(default_factory=dict)  # JSON in env
     dry_run: bool = True
     remediation_cooldown_seconds: int = Field(default=900, ge=0)
     max_actions_per_hour: int = Field(default=4, ge=0)
+
+
+    def policy_config(self) -> PolicyConfig:
+        return PolicyConfig(
+            sustain_alert=self.policy_sustain_alert, sustain_remediate=self.policy_sustain_remediate,
+            remediate_threshold=self.policy_remediate_threshold, remediation_enabled=self.remediation_enabled,
+            dry_run=self.dry_run, cooldown_seconds=self.remediation_cooldown_seconds,
+            max_actions_per_hour=self.max_actions_per_hour, targets=self.remediation_targets)
 
 
 @lru_cache

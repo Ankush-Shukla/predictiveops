@@ -125,6 +125,16 @@ def _apply_fault(m: dict[str, np.ndarray], kind: str, sl: slice, p: np.ndarray) 
         raise DataGenerationError(f"unknown fault type {kind}")
 
 
+def add_spikes(m: dict[str, np.ndarray], rng: np.random.Generator, n: int, n_spikes: int) -> None:
+    """Transient distractor spikes (3-7 min) that do not breach failure thresholds alone."""
+    for st in rng.integers(0, n - 10, n_spikes):
+        d = int(rng.integers(3, 8))
+        sl = slice(int(st), int(st) + d)
+        m["cpu_pct"][sl] += rng.uniform(15, 30)
+        m["latency_p95_ms"][sl] += rng.uniform(150, 450)
+        m["error_rate"][sl] += rng.uniform(0.005, 0.02)
+
+
 def _generate_series(
     cfg: GeneratorConfig, rng: np.random.Generator, series_idx: int
 ) -> pd.DataFrame:
@@ -155,13 +165,7 @@ def _generate_series(
             t = end + cfg.min_gap_minutes + int(rng.exponential(mean_gap))
 
     # --- distractor spikes: magnitudes stay below unhealthy thresholds on their own ---
-    n_spikes = int(rng.poisson(cfg.spike_rate_per_day * cfg.days))
-    for st in rng.integers(0, n - 10, n_spikes):
-        d = int(rng.integers(3, 8))
-        sl = slice(int(st), int(st) + d)
-        m["cpu_pct"][sl] += rng.uniform(15, 30)
-        m["latency_p95_ms"][sl] += rng.uniform(150, 450)
-        m["error_rate"][sl] += rng.uniform(0.005, 0.02)
+    add_spikes(m, rng, n, int(rng.poisson(cfg.spike_rate_per_day * cfg.days)))
 
     # --- clip to physical ranges ---
     for col in ("cpu_pct", "memory_pct", "disk_io_util_pct"):

@@ -11,11 +11,10 @@ from app.core.domain import METRIC_BOUNDS, METRIC_COLUMNS
 from app.core.exceptions import DataValidationError
 
 
-class MetricSample(BaseModel):
+class MetricPoint(BaseModel):
     """One observation of a service's metrics at a point in time (1-minute resolution)."""
 
     timestamp: datetime
-    series_id: str = Field(min_length=1)
     cpu_pct: float = Field(ge=0, le=100)
     memory_pct: float = Field(ge=0, le=100)
     disk_io_util_pct: float = Field(ge=0, le=100)
@@ -24,6 +23,17 @@ class MetricSample(BaseModel):
     request_rate_rps: float = Field(ge=0)
     latency_p95_ms: float = Field(ge=0)
     error_rate: float = Field(ge=0, le=1)
+
+
+class MetricSample(MetricPoint):
+    series_id: str = Field(min_length=1)
+
+
+def points_to_frame(points: list[MetricPoint]) -> pd.DataFrame:
+    """Convert API points to a UTC-timestamped, time-sorted DataFrame."""
+    df = pd.DataFrame([p.model_dump() for p in points])
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    return df.sort_values("timestamp").reset_index(drop=True)
 
 
 def validate_metrics_frame(df: pd.DataFrame, *, require_series_id: bool = True) -> None:
@@ -41,3 +51,15 @@ def validate_metrics_frame(df: pd.DataFrame, *, require_series_id: bool = True) 
         lo, hi = METRIC_BOUNDS[col]
         if (s < lo).any() or (s > hi).any():
             raise DataValidationError(f"column {col!r} outside [{lo}, {hi}]")
+
+
+class PredictionResult(BaseModel):
+    """Output of a single failure-probability prediction."""
+
+    probability: float = Field(ge=0, le=1, description="Calibrated P(failure within horizon)")
+    threshold: float = Field(ge=0, le=1, description="Decision threshold chosen on validation data")
+    predicted_failure: bool
+    horizon_minutes: int
+    model_version: str
+    data_source: str = Field(description="Provenance of the training data, e.g. 'synthetic'")
+    as_of: datetime
