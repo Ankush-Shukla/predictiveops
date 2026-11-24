@@ -10,6 +10,7 @@ from app.api.deps import production_model_block_reason
 from app.api.ingestion import ingest_points
 from app.api.state import ApiState
 from app.core.logging import get_logger
+from app.models.predictor import Predictor
 from app.models.schemas import MetricPoint
 from app.services.prometheus_client import PrometheusClient, frame_to_points
 
