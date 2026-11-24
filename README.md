@@ -49,7 +49,7 @@ python scripts/train.py --promote            # trains, evaluates, enforces gates
 uvicorn app.api.main:app_factory --factory --port 8000
 ```
 
-Open http://localhost:8000 (dashboard) or http://localhost:8000/docs (Swagger). Then
+Open http://localhost:8000 (legacy dashboard) or http://localhost:8000/docs (Swagger). The containerized stack uses the new React console. Then
 `python scripts/demo_walkthrough.py` runs a narrated tour of every feature; [`docs/DEMO.md`](docs/DEMO.md) is the
 presenter's guide.
 
@@ -59,16 +59,18 @@ presenter's guide.
 ## Full stack with Docker Compose
 
 ```bash
-cp .env.example .env     # set GRAFANA_ADMIN_PASSWORD (required); optionally PREDICTIVEOPS_API_KEY, DEMO_ADMIN_TOKEN
+cp .env.example .env     # set TAILSCALE_IP and GRAFANA_ADMIN_PASSWORD
+# TAILSCALE_IP must be the server address returned by: tailscale ip -4
+# Keep .env private; generate a strong Grafana password.
 docker compose up --build
 ```
 
 | URL | What |
 |---|---|
-| http://localhost:3000 | Grafana (`admin` / your password), dashboard "PredictiveOps" |
-| http://localhost:8000 | PredictiveOps dashboard and API |
-| http://localhost:9090 | Prometheus (alert rules under Alerts) |
-| http://localhost:8001 | demo target (`/metrics`, `/work`, `/state`) |
+| http://TAILSCALE_IP:8000 | New PredictiveOps React console (FastAPI routes are reverse-proxied) |
+| http://TAILSCALE_IP:3000 | Grafana infrastructure dashboard (`admin` / your password) |
+| http://localhost:9090 | Prometheus (host-local only) |
+| http://localhost:8001 | Demo target (host-local only) |
 
 The one-shot `trainer` service generates data, trains, enforces the gates and promotes the model into a shared
 volume; `api` starts only after it succeeds. The API polls Prometheus for the `demo-app` service and applies the
@@ -86,10 +88,7 @@ docker compose --profile mlflow up -d     # MLflow UI on :5000
 Real container restarts are **opt-in** and read the security note first: `docker-compose.remediation.yml`
 mounts the Docker socket (effectively root on the host).
 
-The demo target's resource metrics are *simulated* with the same fault models that generated the training data, so
-the model sees in-distribution inputs. Node Exporter is scraped and graphed but the model does **not** use it
-(different scales). Using real metrics means changing the PromQL in `app/services/prometheus_client.py` **and
-retraining on real data**.
+The new React console is served by Nginx on port 8000; Nginx proxies `/v1/*`, `/health`, `/ready`, `/metrics`, and the API documentation to FastAPI. FastAPI is not published on a host port. Grafana is published only on the configured Tailscale address at port 3000. Prometheus and the demo target are bound to host loopback for local diagnostics. Node Exporter and cAdvisor provide host and container telemetry to Grafana. The demo target's resource metrics are *simulated*; the model does **not** consume Node Exporter or cAdvisor metrics. Using real metrics for model inference still requires changing the PromQL in `app/services/prometheus_client.py` and retraining on real data.
 
 ## API in brief
 
@@ -175,7 +174,8 @@ artifact only if everything passes (optional remote MLflow registration through 
 |---|---|
 | `app/core`, `app/models` | settings, logging, domain definitions; schemas, model bundle, registry, predictor |
 | `app/features` | `FeatureBuilder` (backward-looking features, hashed schema shared by training and inference) |
-| `app/api`, `app/static` | FastAPI app, routers, ingestion, poller; dashboard (plain HTML/CSS/JS) |
+| `app/api`, `app/static` | FastAPI app, routers, ingestion, poller; legacy fallback dashboard |
+| `frontend` | React + TypeScript console, Vite build, Nginx reverse proxy |
 | `app/services` | series buffer, Prometheus client, canary logic and simulation |
 | `app/policies` | policy engine, allowlisted actions, SQLite audit store |
 | `data/synthetic` | reproducible simulator, labelling, scenarios |
