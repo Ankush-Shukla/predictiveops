@@ -40,7 +40,13 @@ services:
       PREDICTIVEOPS_REMEDIATION_TARGETS: '{"demo-app":{"container":"predictiveops-demo-app","action":"restart_container"}}'
       PREDICTIVEOPS_CANARY_TARGETS: '{"demo-app":{"container":"predictiveops-demo-app-canary","action":"rollback_canary"}}'
     volumes: [ "artifacts:/srv/artifacts" ]
-    ports: [ "8000:8000" ]
+    restart: unless-stopped
+
+  frontend:
+    build: { context: ./frontend, dockerfile: Dockerfile }
+    image: predictiveops-frontend:local
+    depends_on: [ api ]
+    ports: [ "${TAILSCALE_IP:?set TAILSCALE_IP in .env}:8000:80" ]
     restart: unless-stopped
 
   demo-app:
@@ -53,7 +59,6 @@ services:
       DEMO_ADMIN_TOKEN: ${DEMO_ADMIN_TOKEN:-}   # fault injection is disabled while empty
     labels:
       predictiveops.managed: "true"             # required for remediation to touch this container
-    ports: [ "8001:8001" ]
     healthcheck:
       test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=3)" ]
       interval: 15s
@@ -73,7 +78,6 @@ services:
     labels:
       predictiveops.managed: "true"
       predictiveops.role: canary                # required for rollback_canary
-    ports: [ "8002:8002" ]
     restart: unless-stopped
 
   prometheus:
@@ -86,7 +90,6 @@ services:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
       - prometheus-data:/prometheus
-    ports: [ "9090:9090" ]
     restart: unless-stopped
 
   node-exporter:
@@ -107,7 +110,7 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
-    ports: [ "3000:3000" ]
+    ports: [ "${TAILSCALE_IP:?set TAILSCALE_IP in .env}:3000:3000" ]
     restart: unless-stopped
 
   mlflow:
@@ -117,7 +120,7 @@ services:
       trainer: { condition: service_completed_successfully }
     command: [ "mlflow", "ui", "--host", "0.0.0.0", "--port", "5000", "--backend-store-uri", "sqlite:////srv/artifacts/mlflow.db" ]
     volumes: [ "artifacts:/srv/artifacts" ]
-    ports: [ "5000:5000" ]
+    ports: [ "127.0.0.1:5000:5000" ]
 
 volumes:
   artifacts:
