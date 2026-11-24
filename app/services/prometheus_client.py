@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime
 
@@ -112,7 +113,9 @@ class PrometheusClient:
         """Aligned frame (real timestamps in seconds) holding only steps where ALL 8 metrics exist."""
         if not SERVICE_RE.fullmatch(service):
             raise PrometheusError(f"invalid service name {service!r}")
-        start = end - (steps - 1) * step_seconds
+        aligned_end = math.floor(end / step_seconds) * step_seconds
+        start = aligned_end - (steps - 1) * step_seconds
+        end = aligned_end
         cols = {m: self.query_range(q.replace("$service", service), start, end, step_seconds)
                 for m, q in self.queries.items()}
         df = pd.DataFrame(cols).dropna().sort_index()
