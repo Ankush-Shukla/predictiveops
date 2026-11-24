@@ -101,7 +101,10 @@ def prepare(df: pd.DataFrame, horizon: int, *,
 def run_training(df: pd.DataFrame, cfg: TrainConfig) -> TrainingResult:
     np.random.seed(cfg.seed)
     if cfg.scope not in SCOPE_METRIC_COLUMNS:
-        raise DataValidationError(f"unknown model scope {cfg.scope!r}; choose from {sorted(SCOPE_METRIC_COLUMNS)}")
+        choices = sorted(SCOPE_METRIC_COLUMNS)
+        raise DataValidationError(
+            f"unknown model scope {cfg.scope!r}; choose from {choices}"
+        )
     metrics = SCOPE_METRIC_COLUMNS[cfg.scope]
     df, feats, builder = prepare(df, cfg.horizon_minutes, metrics=metrics)
     data_source = "+".join(sorted(df["data_source"].unique())) if "data_source" in df else "unknown"
