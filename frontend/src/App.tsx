@@ -110,8 +110,10 @@ function App() {
   const serviceCount = data.series.length;
   const containerRows: AnyRecord[] = data.containerStatus?.containers ?? [];
   const containerCount = containerRows.length;
-  const containerCpu = containerRows.reduce((sum, row) => sum + (row.cpu_cores ?? 0), 0);
-  const containerMemory = containerRows.reduce((sum, row) => sum + (row.memory_bytes ?? 0), 0);
+  const containerCpu = containerRows.length && containerRows.every(row => typeof row.cpu_cores === "number")
+    ? containerRows.reduce((sum, row) => sum + row.cpu_cores, 0) : null;
+  const containerMemory = containerRows.length && containerRows.every(row => typeof row.memory_bytes === "number")
+    ? containerRows.reduce((sum, row) => sum + row.memory_bytes, 0) : null;
   const alertCount = data.alerts.length;
   const remediation = data.policy?.config ?? {};
   const chartData = useMemo(() => data.series.map((item, index) => ({
@@ -200,7 +202,7 @@ function App() {
           {page === "Containers" && <>
             <section className="stat-grid container-summary">
               <StatCard icon={<Server/>} label="RUNNING CONTAINERS" value={String(containerCount)} detail={data.containerStatus?.available ? "Reporting through cAdvisor" : "Waiting for cAdvisor metrics"} tone="blue"/>
-              <StatCard icon={<Cpu/>} label="TOTAL CPU" value={containerCpu.toFixed(2) + " cores"} detail="Aggregate container CPU consumption" tone="green"/>
+              <StatCard icon={<Cpu/>} label="TOTAL CPU" value={containerCpu === null ? "—" : containerCpu.toFixed(2) + " cores"} detail="Aggregate container CPU consumption" tone="green"/>
               <StatCard icon={<Activity/>} label="MEMORY WORKING SET" value={formatBytes(containerMemory)} detail="Sum of container working sets" tone="amber"/>
               <StatCard icon={<Zap/>} label="TELEMETRY" value={data.containerStatus?.available ? "Live" : "Unavailable"} detail="Prometheus · cAdvisor · 15s scrape" tone={data.containerStatus?.available ? "green" : "amber"}/>
             </section>
