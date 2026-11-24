@@ -93,7 +93,8 @@ def test_grafana_provisioning_consistent():
         assert p["datasource"]["uid"] == ds["uid"]
         assert all(t["expr"] for t in p["targets"])
     assert len({p["id"] for p in dash["panels"]}) == len(dash["panels"])
-    assert "SIMULATED" in dash["description"] and "SYNTHETIC" in dash["description"]
+    assert "SYNTHETIC" in dash["description"] and "not production-validated" in dash["description"]
+    assert all("Demo application" not in p["title"] for p in dash["panels"])
 
 
 def test_workflows_least_privilege_and_no_inline_secrets():
@@ -128,10 +129,10 @@ def test_gate_report_script(tmp_path):
     assert "Model `v1`" in out and "f1>=min" in out and "synthetic only" in out
 
 
-def test_static_safety_net_rules_mirror_the_baseline_thresholds():
-    from training.baseline import DEFAULT_WARN_THRESHOLDS
-
+def test_static_safety_net_rules_cover_real_host_telemetry():
     groups = {g["name"]: g["rules"] for g in load("monitoring/alert_rules.yml")["groups"]}
-    exprs = {r["expr"] for r in groups["static-safety-net"]}
-    assert exprs == {f"demo_{m} > {v:g}" for m, v in DEFAULT_WARN_THRESHOLDS.items()}
-    assert all(r["labels"]["source"] == "static-threshold" for r in groups["static-safety-net"])
+    rules = groups["host-safety-net"]
+    alerts = {r["alert"] for r in rules}
+    assert alerts == {"HostCpuWarning", "HostMemoryWarning", "HostFilesystemWarning", "HostDiskIoWarning"}
+    assert all(r["labels"]["source"] == "static-threshold" for r in rules)
+    assert all("demo_" not in r["expr"] for r in rules)
