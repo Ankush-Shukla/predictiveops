@@ -1,39 +1,39 @@
 # PredictiveOps
 
-Predictive failure detection and ML-driven deployment validation for containerized applications
-(MCA Semester I minor project, JIMS Engineering Management Technical Campus).
+Predictive failure detection for two independent scopes: whole-host resource exhaustion and per-application degradation. The platform combines Prometheus telemetry, calibrated ML inference, alert policy, audit history and Grafana observability.
 
 PredictiveOps scores multivariate service metrics with a calibrated model that outputs the probability of a
 failure within the next 15-30 minutes, turns that signal into sustained-risk alerts, optionally triggers
 tightly constrained remediation, gates model promotion in CI, and judges canary releases against a baseline
 with the same model.
 
-> **Read this first.** All training and demo data is **synthetic** (`data_source = "synthetic"` everywhere).
-> Results show the pipeline works under controlled conditions; they are **not** evidence that it predicts real
-> production failures. The model detects almost nothing when a fault mechanism was absent from training (so keep
-> threshold alerts too), and the canary only catches faults that begin before its decision point. Details and
-> numbers: [`docs/evaluation.md`](docs/evaluation.md). `docker compose up` has not been executed by the author;
-> see [Verification status](#verification-status).
+> **Production safety:** synthetic data is for development and CI only. Production inference rejects synthetic-only
+> models and models without passing evaluation gates. A production deployment requires two separately trained
+> models and reviewed incident labels: one for host metrics and one for application metrics. Until both are
+> available, `/ready` returns HTTP 503 and the dashboard reports the exact blocker. See
+> [the production telemetry contract](docs/production-telemetry.md).
 
 ## How it fits together
 
 ```mermaid
 flowchart LR
-  APP[demo target<br/>simulated metrics] --> PROM[Prometheus]
-  NODE[Node Exporter] --> PROM
-  PROM -->|query_range| POLL[poller]
+  NODE[Node Exporter] --> PROM[Prometheus]
+  CAD[cAdvisor] --> PROM
+  APP[Instrumented applications] --> PROM
+  PROM --> HOST[Host query adapter]
+  PROM --> SERVICE[Application query adapter]
+  HOST --> HB[Host feature buffer] --> HM[Host model]
+  SERVICE --> AB[Application feature buffers] --> AM[Application models]
   subgraph API[PredictiveOps API]
-    POLL --> ING[ingestion + series buffer]
-    ING --> FEAT[FeatureBuilder<br/>152 features] --> MODEL[calibrated model]
-    MODEL --> POL[alert policy] --> ACT[allowlisted remediation<br/>off + dry-run by default]
-    MODEL --> CAN[canary evaluator]
+    HM --> POLICY[Alert policy + audit]
+    AM --> POLICY
+    POLICY --> SAFE[Allowlisted remediation<br/>disabled + dry-run]
   end
-  POL --> DB[(SQLite audit)]
-  API -->|/metrics| PROM --> GRAF[Grafana]
+  API -->|/metrics| PROM
+  PROM --> GRAF[Grafana]
   subgraph CI[Offline / CI]
-    SYN[synthetic data] --> TRAIN[train + calibrate + evaluate] --> GATES{F1 / FPR gates} -->|pass| CHAMP[champion model + MLflow]
+    SYN[Synthetic development data] --> TEST[Tests and pipeline validation]
   end
-  CHAMP --> MODEL
 ```
 
 More detail (data flow, storage, leakage controls, API contracts): [`docs/architecture.md`](docs/architecture.md).
@@ -56,40 +56,86 @@ presenter's guide.
 `scripts/train.py` options: `--model-type {hgb,logreg,xgb}`, `--enforce-gates` (exit 2 when gates fail),
 `--no-mlflow`, `--promote`. MLflow data lands in `artifacts/mlflow.db` (`mlflow ui --backend-store-uri sqlite:///artifacts/mlflow.db`).
 
-## Full stack with Docker Compose
+## Production stack with Docker Compose
+
+The production Compose stack contains the API, React console, Prometheus, Node Exporter,
+cAdvisor and Grafana. It contains **no demo application or canary containers**. Host telemetry
+is collected automatically. Application telemetry is opt-in per service through Prometheus
+file-based discovery.
+
+### 1. Prepare labelled training data
+
+Create two one-minute datasets and place them in the ignored local `training-data/` directory:
+
+- `training-data/host.csv.gz` — host metrics and host incident labels.
+- `training-data/application.csv.gz` — application metrics and application incident labels.
+
+The datasets must include the scope's metric columns, `timestamp`, `series_id`,
+`is_unhealthy`, and a truthful `data_source` provenance value. Labels must be derived from
+reviewed incident/impact records or an explicitly documented operational definition. See
+[production telemetry and training requirements](docs/production-telemetry.md). Do not label
+synthetic data as production.
+
+### 2. Train and promote both models
 
 ```bash
-cp .env.example .env     # set TAILSCALE_IP and GRAFANA_ADMIN_PASSWORD
-# Set it automatically to the server's Tailscale IPv4 address.
-sed -i "s/^TAILSCALE_IP=.*/TAILSCALE_IP=$(tailscale ip -4)/" .env
-# Keep .env private; generate a strong Grafana password.
-docker compose up --build
+cp .env.example .env
+# Set TAILSCALE_IP and a strong GRAFANA_ADMIN_PASSWORD in .env.
+mkdir -p training-data
+# Place host.csv.gz and application.csv.gz in training-data/.
+docker compose --profile training run --build --rm trainer
 ```
 
-| URL | What |
+The trainer evaluates each scope independently and promotes only if its quality gates pass.
+It writes champions under `artifacts/models/host` and `artifacts/models/application`.
+Training is an explicit operation; Compose never generates or promotes synthetic models
+during API startup.
+
+### 3. Configure application discovery
+
+For each application, expose the metrics contract in
+[`docs/production-telemetry.md`](docs/production-telemetry.md), apply the Docker label
+`predictiveops.service=<service>`, and add its scrape target to
+`prometheus/targets/applications.yml`:
+
+```yaml
+- targets: ["your-app:8000"]
+  labels:
+    service: your-app
+    environment: production
+```
+
+Set the matching comma-separated service names in
+`PREDICTIVEOPS_PROMETHEUS_APPLICATION_SERVICES` in `.env`. The app target and configured
+service name must match exactly.
+
+### 4. Start the stack
+
+```bash
+docker compose up --build -d
+docker compose ps
+curl -i "http://$TAILSCALE_IP:8000/ready"
+```
+
+Prometheus scrapes at 15-second intervals; the prediction pipeline samples one-minute
+windows. The host and application models remain separate. Both must pass production
+eligibility checks before readiness becomes healthy. The first prediction for a new series
+requires the model's full contiguous feature history.
+
+| URL | Purpose |
 |---|---|
-| http://TAILSCALE_IP:8000 | New PredictiveOps React console (FastAPI routes are reverse-proxied) |
-| http://TAILSCALE_IP:3000 | Grafana infrastructure dashboard (`admin` / your password) |
-| http://localhost:9090 | Prometheus (host-local only) |
-| http://localhost:8001 | Demo target (host-local only) |
+| http://TAILSCALE_IP:8000 | React console |
+| http://TAILSCALE_IP:3000 | Grafana |
+| http://localhost:9090 | Prometheus, if published locally by your deployment |
+| http://TAILSCALE_IP:8000/docs | API documentation |
 
-The one-shot `trainer` service generates data, trains, enforces the gates and promotes the model into a shared
-volume; `api` starts only after it succeeds. The API polls Prometheus for the `demo-app` service and applies the
-alert policy. The demo is **accelerated**: one 5-second step stands for one model "minute".
+Prometheus application targets are discovered from the mounted
+`prometheus/targets/applications.yml`. Node Exporter and cAdvisor provide host/container
+telemetry. Application latency and error-rate alerts use the standard
+`predictiveops_app_*` metric contract.
 
-```bash
-curl -X POST localhost:8001/fault -H "X-Admin-Token: $DEMO_ADMIN_TOKEN" -H 'content-type: application/json' \
-     -d '{"fault_type":"memory_leak","ramp_minutes":30}'       # disabled unless DEMO_ADMIN_TOKEN is set
-curl "http://$TAILSCALE_IP:8000/v1/alerts" ; curl "http://$TAILSCALE_IP:8000/v1/audit" ; curl "http://$TAILSCALE_IP:8000/v1/sources"
-curl -X POST localhost:8001/fault/clear -H "X-Admin-Token: $DEMO_ADMIN_TOKEN"
-docker compose --profile canary up -d     # second demo instance labelled as a canary
-docker compose --profile mlflow up -d     # MLflow UI on :5000
-```
-
-Real container restarts are **opt-in** and read the security note first: `docker-compose.remediation.yml`
-mounts the Docker socket (effectively root on the host).
-
-The new React console is served by Nginx on port 8000; Nginx proxies `/v1/*`, `/health`, `/ready`, `/metrics`, and the API documentation to FastAPI. FastAPI is not published on a host port. Grafana is published only on the configured Tailscale address at port 3000. Prometheus and the demo target are bound to host loopback for local diagnostics. Node Exporter and cAdvisor provide host and container telemetry to Grafana. The demo target's resource metrics are *simulated*; the model does **not** consume Node Exporter or cAdvisor metrics. Using real metrics for model inference still requires changing the PromQL in `app/services/prometheus_client.py` and retraining on real data.
+Remediation stays disabled and dry-run by default. Do not mount the Docker socket or enable
+live remediation until its target allowlist and action path have been reviewed.
 
 ## API in brief
 
