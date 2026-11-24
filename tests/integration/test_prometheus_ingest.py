@@ -176,6 +176,16 @@ def test_poller_ingests_without_duplicates_and_scores(predictor, tmp_path):
     assert pl.status["demo-app"]["samples_ingested"] == 65
 
 
+def test_production_poller_refuses_synthetic_model(predictor, tmp_path):
+    st = make_state(predictor, tmp_path, env="production")
+    now = [T0 + 59 * 5]
+    pl = poller_for(st, healthy, now)
+    pl.poll_once()
+    assert "not trained exclusively" in pl.status["demo-app"]["error"]
+    assert st.buffers == {}
+    assert st.latest == {}
+
+
 def test_poller_drives_alerts_and_dry_run_remediation(predictor, tmp_path):
     targets = {"demo-app": RemediationTarget(container="demo", action="restart_container")}
     st = make_state(predictor, tmp_path, remediation_enabled=True, remediation_targets=targets)
