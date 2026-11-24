@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Compose file is valid (placeholder, non-secret value for the required variable)
-        run: GRAFANA_ADMIN_PASSWORD=ci-placeholder docker compose config --quiet
+        run: TAILSCALE_IP=127.0.0.1 GRAFANA_ADMIN_PASSWORD=ci-placeholder docker compose config --quiet
       - name: Prometheus config and rules are valid
         run: |
           docker run --rm --entrypoint promtool -v "$PWD/prometheus:/p:ro" -v "$PWD/monitoring:/m:ro" \
