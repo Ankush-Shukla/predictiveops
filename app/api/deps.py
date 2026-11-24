@@ -11,15 +11,33 @@ from app.core.exceptions import ModelNotReadyError
 from app.models.predictor import Predictor
 
 
+def production_model_block_reason(state: ApiState) -> str | None:
+    """Reject demo-trained or ungated models when the API runs in production."""
+    predictor = state.predictor
+    if predictor is None:
+        return "no champion model loaded"
+    if state.settings.env != "production":
+        return None
+    metadata = predictor.bundle.metadata
+    source = str(metadata.get("data_source", "unknown")).lower().split("+")
+    if "synthetic" in source or "unknown" in source:
+        return "model was not trained exclusively on identified production data"
+    gates = (metadata.get("evaluation") or {}).get("gates")
+    if not isinstance(gates, dict) or gates.get("passed") is not True:
+        return "model has no passing production quality-gate report"
+    return None
+
+
 def get_state(request: Request) -> ApiState:
     return request.app.state.api
 
 
 def get_predictor(request: Request) -> Predictor:
-    p = request.app.state.api.predictor
-    if p is None:
-        raise ModelNotReadyError("no champion model loaded; train and promote one first "
-                                 "(python scripts/train.py --promote)")
+    state = request.app.state.api
+    p = state.predictor
+    reason = production_model_block_reason(state)
+    if p is None or reason is not None:
+        raise ModelNotReadyError(reason or "model is not ready")
     return p
 
 
