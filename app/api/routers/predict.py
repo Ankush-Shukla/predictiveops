@@ -22,7 +22,11 @@ def predict(req: PredictRequest, p: Predictor = Depends(get_predictor),
     return result
 
 
-@development_router.post("/metrics/ingest", response_model=IngestResponse, dependencies=[Depends(require_api_key)])
+@development_router.post(
+    "/metrics/ingest",
+    response_model=IngestResponse,
+    dependencies=[Depends(require_api_key)],
+)
 def ingest(req: IngestRequest, p: Predictor = Depends(get_predictor),
            state: ApiState = Depends(get_state)) -> IngestResponse:
     """Append samples to a series buffer, score every new minute and run the alert policy."""
