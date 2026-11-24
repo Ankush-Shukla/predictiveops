@@ -41,6 +41,7 @@ jobs:
         run: |
           docker build -f docker/Dockerfile --target runtime -t predictiveops-runtime:ci .
           docker build -f docker/Dockerfile --target trainer -t predictiveops-trainer:ci .
+          docker build -f frontend/Dockerfile -t predictiveops-frontend:ci frontend/
       - name: Dockerfile lint
         uses: hadolint/hadolint-action@v3.1.0
         with:
