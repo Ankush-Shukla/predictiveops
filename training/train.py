@@ -16,16 +16,16 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from app.core.domain import METRIC_COLUMNS
+from app.core.domain import METRIC_COLUMNS, SCOPE_METRIC_COLUMNS
 from app.core.exceptions import DataValidationError
 from app.core.logging import get_logger
-from app.features.builder import FeatureBuilder
+from app.features.builder import FeatureBuilder, FeatureConfig
 from app.models import registry
 from app.models.bundle import ModelBundle
 from app.models.schemas import validate_metrics_frame
 from data.synthetic.generator import add_labels
 from training import tracking
-from training.baseline import threshold_score
+from training.baseline import DEFAULT_WARN_THRESHOLDS, threshold_score
 from training.calibration import choose_and_fit_calibrator
 from training.evaluate import (
     event_metrics,
@@ -44,6 +44,7 @@ MODEL_TYPES = ("hgb", "logreg", "xgb")
 @dataclass
 class TrainConfig:
     model_type: str = "hgb"
+    scope: str = "combined"
     horizon_minutes: int = 20
     seed: int = 42
     max_fpr_for_threshold: float = 0.05
@@ -83,22 +84,26 @@ def make_estimator(model_type: str, seed: int, pos_weight: float):
     raise ValueError(f"unknown model_type {model_type!r}; choose from {MODEL_TYPES}")
 
 
-def prepare(df: pd.DataFrame, horizon: int) -> tuple[pd.DataFrame, pd.DataFrame, FeatureBuilder]:
+def prepare(df: pd.DataFrame, horizon: int, *,
+            metrics: tuple[str, ...] = METRIC_COLUMNS) -> tuple[pd.DataFrame, pd.DataFrame, FeatureBuilder]:
     """Return (df with labels recomputed for `horizon`, feature matrix, builder)."""
-    validate_metrics_frame(df)
+    validate_metrics_frame(df, metrics=metrics)
     if "is_unhealthy" not in df.columns:
         raise DataValidationError("dataset must contain 'is_unhealthy' ground truth")
     df = df.sort_values(["series_id", "timestamp"]).reset_index(drop=True)
     df = pd.concat([add_labels(g.drop(columns=["label_failure_within_h", "label_valid"],
                                       errors="ignore"), horizon)
                     for _, g in df.groupby("series_id", sort=False)]).reset_index(drop=True)
-    builder = FeatureBuilder()
+    builder = FeatureBuilder(FeatureConfig(metrics=metrics))
     return df, builder.transform(df), builder
 
 
 def run_training(df: pd.DataFrame, cfg: TrainConfig) -> TrainingResult:
     np.random.seed(cfg.seed)
-    df, feats, builder = prepare(df, cfg.horizon_minutes)
+    if cfg.scope not in SCOPE_METRIC_COLUMNS:
+        raise DataValidationError(f"unknown model scope {cfg.scope!r}; choose from {sorted(SCOPE_METRIC_COLUMNS)}")
+    metrics = SCOPE_METRIC_COLUMNS[cfg.scope]
+    df, feats, builder = prepare(df, cfg.horizon_minutes, metrics=metrics)
     data_source = "+".join(sorted(df["data_source"].unique())) if "data_source" in df else "unknown"
 
     scorable = df["label_valid"] & ~df["is_unhealthy"] & feats.notna().all(axis=1)
@@ -123,7 +128,9 @@ def run_training(df: pd.DataFrame, cfg: TrainConfig) -> TrainingResult:
     m_test = score_metrics(y["test"], prob["test"], threshold, probabilistic=True)
 
     # --- static-threshold baselines (default warning thresholds; and scale tuned on validation) ---
-    s_val, s_test = threshold_score(X["val"]), threshold_score(X["test"])
+    baseline_thresholds = {m: DEFAULT_WARN_THRESHOLDS[m] for m in metrics if m in DEFAULT_WARN_THRESHOLDS}
+    s_val = threshold_score(X["val"], baseline_thresholds)
+    s_test = threshold_score(X["test"], baseline_thresholds)
     base_default = score_metrics(y["test"], s_test, 1.0, probabilistic=False)
     t_b, _ = select_threshold(s_val, y["val"], cfg.max_fpr_for_threshold)
     base_tuned = score_metrics(y["test"], s_test, t_b, probabilistic=False)
@@ -147,7 +154,7 @@ def run_training(df: pd.DataFrame, cfg: TrainConfig) -> TrainingResult:
            for i in order]
 
     gates = evaluate_gates(m_test, event, base_default["pr_auc"], cfg.gates)
-    version = cfg.version or f"v{datetime.now(UTC):%Y%m%d%H%M%S}-{cfg.model_type}"
+    version = cfg.version or f"v{datetime.now(UTC):%Y%m%d%H%M%S}-{cfg.scope}-{cfg.model_type}"
     report = {
         "val": m_val, "test": m_test, "event": event, "event_by_fault": event_by_fault,
         "event_by_speed": event_by_speed,
@@ -159,9 +166,10 @@ def run_training(df: pd.DataFrame, cfg: TrainConfig) -> TrainingResult:
                   "cut_val_test": str(sp.cut2), "purge_gap_minutes": cfg.horizon_minutes},
     }
     metadata = {
-        "version": version, "model_type": cfg.model_type, "horizon_minutes": cfg.horizon_minutes,
+        "version": version, "model_type": cfg.model_type, "scope": cfg.scope,
+        "horizon_minutes": cfg.horizon_minutes, "metric_columns": list(metrics),
         "data_source": data_source, "seed": cfg.seed,
-        "trained_at": datetime.now(UTC).isoformat(), "metric_columns": list(METRIC_COLUMNS),
+        "trained_at": datetime.now(UTC).isoformat(),
         "evaluation": {"test": {k: v for k, v in m_test.items() if k != "calibration_curve"},
                        "event": event, "event_by_fault": event_by_fault, "event_by_speed": event_by_speed,
                        "gates": gates.model_dump(),
@@ -178,7 +186,7 @@ def run_training(df: pd.DataFrame, cfg: TrainConfig) -> TrainingResult:
     if cfg.use_mlflow:
         ml = tracking.log_training_run(
             tracking_uri=cfg.tracking_uri, experiment=cfg.experiment, run_name=version,
-            params={"model_type": cfg.model_type, "horizon_minutes": cfg.horizon_minutes,
+            params={"model_type": cfg.model_type, "scope": cfg.scope, "horizon_minutes": cfg.horizon_minutes,
                     "seed": cfg.seed, "data_source": data_source, "threshold": threshold,
                     "schema_hash": builder.schema.schema_hash, "n_features": len(builder.feature_names),
                     **{f"gate_{k}": v for k, v in asdict(cfg.gates).items()}},
