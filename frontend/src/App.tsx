@@ -216,6 +216,6 @@ function SeriesTable({rows,expanded=false}:{rows:AnyRecord[];expanded?:boolean})
 function RecordTable({rows,empty:emptyText}:{rows:AnyRecord[];empty:string}) {
   if (!rows.length) return <EmptyState icon={<CheckCircle2/>} title="Nothing to show" text={emptyText}/>;
   const columns = Array.from(new Set(rows.slice(0,12).flatMap(row=>Object.keys(row)))).filter(key=>!["id","payload","details","metadata"].includes(key)).slice(0,5);
-  return <div className="table-scroll"><table><thead><tr>{columns.map(c=><th key={c}>{c.replaceAll("_"," ").toUpperCase()}</th>)}</tr></thead><tbody>{rows.slice(0,30).map((row,i)=><tr key={row.id ?? i}>{columns.map(c=><td key={c}>{typeof row[c] === "object" ? JSON.stringify(row[c]) : String(row[c] ?? "—")}</td>)}</tr>)}</tbody></table></div>;
+  return <div className="table-scroll"><table><thead><tr>{columns.map(c=><th key={c}>{c.replace(/_/g," ").toUpperCase()}</th>)}</tr></thead><tbody>{rows.slice(0,30).map((row,i)=><tr key={row.id ?? i}>{columns.map(c=><td key={c}>{typeof row[c] === "object" ? JSON.stringify(row[c]) : String(row[c] ?? "—")}</td>)}</tr>)}</tbody></table></div>;
 }
 export default App;
