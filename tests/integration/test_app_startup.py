@@ -43,11 +43,19 @@ def test_startup_without_model_stays_alive_but_not_ready(tmp_path):
 
 def test_production_readiness_requires_both_scope_models(model_dir, tmp_path):
     base = Predictor.from_champion(model_dir)
+    host_result = run_training(
+        generate_dataset(GeneratorConfig(days=8, n_series=3, seed=22)),
+        TrainConfig(
+            model_type="logreg", scope="host", use_mlflow=False, max_fpr_for_threshold=0.2,
+            gates=GateConfig(min_f1=0.0, max_fpr=1.0, must_beat_baseline_pr_auc=False),
+        ),
+    )
+    host = Predictor(host_result.bundle, host_result.version)
 
-    def scoped(scope):
-        p = copy.copy(base)
-        p.bundle = copy.copy(base.bundle)
-        p.bundle.metadata = dict(base.bundle.metadata)
+    def production_metadata(predictor, scope):
+        p = copy.copy(predictor)
+        p.bundle = copy.copy(predictor.bundle)
+        p.bundle.metadata = dict(predictor.bundle.metadata)
         p.bundle.metadata.update({
             "scope": scope,
             "data_source": "production",
@@ -63,8 +71,8 @@ def test_production_readiness_requires_both_scope_models(model_dir, tmp_path):
         blocked = client.get("/ready")
         assert blocked.status_code == 503 and blocked.json()["scope"] == "host"
         app.state.api.set_scope_predictors({
-            "host": scoped("host"),
-            "application": scoped("application"),
+            "host": production_metadata(host, "host"),
+            "application": production_metadata(base, "application"),
         })
         assert client.get("/ready").status_code == 200
         models = client.get("/v1/model").json()["models"]
