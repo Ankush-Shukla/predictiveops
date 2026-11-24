@@ -21,7 +21,7 @@ const get = async (path: string) => {
   if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
   return response.json();
 };
-const first = (obj: AnyRecord | null, keys: string[], fallback = "—") => {
+const first = (obj: AnyRecord | null, keys: string[], fallback: any = "—") => {
   if (!obj) return fallback;
   for (const key of keys) if (obj[key] !== undefined && obj[key] !== null) return obj[key];
   return fallback;
