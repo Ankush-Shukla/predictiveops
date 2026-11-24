@@ -92,6 +92,20 @@ services:
       - prometheus-data:/prometheus
     restart: unless-stopped
 
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    container_name: predictiveops-cadvisor
+    command: [ "--docker_only=true", "--housekeeping_interval=15s" ]
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    devices:
+      - /dev/kmsg
+    restart: unless-stopped
+
   node-exporter:
     image: prom/node-exporter:v1.9.1
     command: [ "--path.rootfs=/host" ]
