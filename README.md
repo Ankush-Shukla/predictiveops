@@ -8,7 +8,7 @@ tightly constrained remediation, gates model promotion in CI, and judges canary 
 with the same model.
 
 > **Production safety:** synthetic data is for development and CI only. Production inference rejects synthetic-only
-> models and models without passing evaluation gates. A production deployment requires two separately trained
+> models and models without passing evaluation gates. These controls are **not** evidence of production accuracy; only evaluation on reviewed real incidents can establish that. A production deployment requires two separately trained
 > models and reviewed incident labels: one for host metrics and one for application metrics. Until both are
 > available, `/ready` returns HTTP 503 and the dashboard reports the exact blocker. See
 > [the production telemetry contract](docs/production-telemetry.md).
