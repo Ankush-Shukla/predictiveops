@@ -67,12 +67,15 @@ def test_labels_and_targets_line_up_with_safety_checks():
     assert can_t["action"] == "rollback_canary"
 
 
-def test_api_depends_on_successful_training_and_clocks_match():
-    assert SVC["api"]["depends_on"]["trainer"]["condition"] == "service_completed_successfully"
-    assert "--enforce-gates" in " ".join(SVC["trainer"]["command"])
-    assert SVC["demo-app"]["environment"]["DEMO_SIM_MINUTE_SECONDS"] == \
-        SVC["api"]["environment"]["PREDICTIVEOPS_PROMETHEUS_STEP_SECONDS"]  # one tick == one sample step
-
+def test_production_api_does_not_auto_train_or_promote_synthetic_models():
+    trainer = SVC["trainer"]
+    assert "training" in trainer["profiles"]
+    command = " ".join(trainer["command"])
+    assert "/srv/artifacts/data/production.csv.gz" in command
+    assert "generate_data.py" not in command
+    assert "--promote" in command and "--enforce-gates" in command
+    assert "depends_on" not in SVC["api"]
+    assert SVC["api"]["environment"]["PREDICTIVEOPS_ENV"] == "production"
 
 def test_prometheus_jobs_match_service_names_used_by_default_queries():
     prom = load("prometheus/prometheus.yml")
