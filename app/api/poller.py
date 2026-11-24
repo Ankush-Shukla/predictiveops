@@ -19,9 +19,11 @@ log = get_logger(__name__)
 class PrometheusPoller:
     def __init__(self, state: ApiState, client: PrometheusClient, services: list[str], *,
                  step_seconds: float, interval_seconds: float, lookback_steps: int,
-                 clock=time.time) -> None:
+                 clock=time.time, scope: str = "combined",
+                 predictor: Predictor | None = None) -> None:
         self.state, self.client, self.services = state, client, services
         self.step, self.interval, self.steps = step_seconds, interval_seconds, lookback_steps
+        self.scope, self.predictor = scope, predictor
         self._clock = clock
         self._sample_origin_ts = self._clock()
         self._sample_origin_dt = datetime.now(UTC)
@@ -35,12 +37,12 @@ class PrometheusPoller:
             st = self.status[svc]
             st["last_poll"] = datetime.now(UTC).isoformat(timespec="seconds")
             try:
-                reason = production_model_block_reason(self.state)
-                if reason is not None:
-                    raise RuntimeError(reason)
-                predictor = self.state.predictor
-                if predictor is None:
-                    raise RuntimeError("no champion model loaded")
+                predictor = (self.predictor or self.state.scope_predictors.get(self.scope)
+                             or self.state.predictor)
+                reason = production_model_block_reason(
+                    self.state, predictor, expected_scope=self.scope if self.scope != "combined" else None)
+                if predictor is None or reason is not None:
+                    raise RuntimeError(reason or "no champion model loaded")
                 raw = self.client.fetch_window(svc, end=self._clock(), steps=self.steps,
                                                step_seconds=self.step)
                 df = self.client.to_sample_clock(
@@ -51,7 +53,8 @@ class PrometheusPoller:
                 )
                 if df.empty:
                     raise RuntimeError("no complete samples returned for this service")
-                res = ingest_points(self.state, predictor, svc,
+                series_id = svc if self.scope == "combined" else f"{self.scope}:{svc}"
+                res = ingest_points(self.state, predictor, series_id,
                                     [MetricPoint(**p) for p in frame_to_points(df)])
                 st["samples_ingested"] += res.accepted
                 st["last_ok"], st["error"] = st["last_poll"], None
