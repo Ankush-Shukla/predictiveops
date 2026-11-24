@@ -851,6 +851,7 @@
   "timepicker": {},
   "timezone": "browser",
   "title": "PredictiveOps · Infrastructure",
+  "description": "SIMULATED infrastructure metrics and SYNTHETIC model training data.",
   "uid": "predictiveops",
   "version": 2
 }

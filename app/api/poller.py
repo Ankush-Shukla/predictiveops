@@ -22,6 +22,8 @@ class PrometheusPoller:
         self.state, self.client, self.services = state, client, services
         self.step, self.interval, self.steps = step_seconds, interval_seconds, lookback_steps
         self._clock = clock
+        self._sample_origin_ts = self._clock()
+        self._sample_origin_dt = datetime.now(UTC)
         self.status: dict[str, dict] = {s: {"last_poll": None, "last_ok": None, "error": None,
                                             "samples_ingested": 0} for s in services}
         self._stop = threading.Event()
@@ -37,7 +39,12 @@ class PrometheusPoller:
                     raise RuntimeError("no champion model loaded")
                 raw = self.client.fetch_window(svc, end=self._clock(), steps=self.steps,
                                                step_seconds=self.step)
-                df = self.client.to_sample_clock(raw, self.step)
+                df = self.client.to_sample_clock(
+                    raw,
+                    self.step,
+                    origin_ts=self._sample_origin_ts,
+                    origin_sample_ts=self._sample_origin_dt,
+                )
                 if df.empty:
                     raise RuntimeError("no complete samples returned for this service")
                 res = ingest_points(self.state, predictor, svc,

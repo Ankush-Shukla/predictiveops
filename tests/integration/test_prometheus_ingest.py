@@ -102,12 +102,26 @@ def test_empty_result_gives_empty_frame():
 
 def test_sample_clock_is_regular_and_stable_across_polls():
     c = client_for(healthy)
-    a = PrometheusClient.to_sample_clock(c.fetch_window("s", end=T0 + 100, steps=20, step_seconds=5), 5)
-    b = PrometheusClient.to_sample_clock(c.fetch_window("s", end=T0 + 125, steps=20, step_seconds=5), 5)
-    assert (a["timestamp"].diff().dropna() == pd.Timedelta(minutes=1)).all()
-    shared = set(a["timestamp"]) & set(b["timestamp"])
-    assert len(shared) == 15  # overlapping steps get identical logical timestamps
+    origin_sample_ts = pd.Timestamp("2026-11-24T19:00:00Z")
 
+    a = PrometheusClient.to_sample_clock(
+        c.fetch_window("s", end=T0 + 100, steps=20, step_seconds=5),
+        5,
+        origin_ts=T0,
+        origin_sample_ts=origin_sample_ts,
+    )
+    b = PrometheusClient.to_sample_clock(
+        c.fetch_window("s", end=T0 + 125, steps=20, step_seconds=5),
+        5,
+        origin_ts=T0,
+        origin_sample_ts=origin_sample_ts,
+    )
+
+    assert (a["timestamp"].diff().dropna() == pd.Timedelta(minutes=1)).all()
+    assert a["timestamp"].max().year == 2026
+
+    shared = set(a["timestamp"]) & set(b["timestamp"])
+    assert len(shared) == 15
 
 def test_custom_queries_must_cover_all_metrics():
     with pytest.raises(ValueError):

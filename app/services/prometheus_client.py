@@ -67,22 +67,28 @@ class PrometheusClient:
         df = pd.DataFrame(cols).dropna().sort_index()
         df.index.name = "ts"
         return df.reset_index()
-
     @staticmethod
-    def to_sample_clock(df: pd.DataFrame, step_seconds: float) -> pd.DataFrame:
-        """Map each scrape step to one logical 1-minute sample with a STABLE timestamp.
-
-        logical = floor(ts / step) * 60 s, so repeated polls label the same step identically and
-        accelerated demos (step < 60 s) still produce the regular 1-minute spacing the model needs.
-        """
+    def to_sample_clock(
+        df: pd.DataFrame,
+        step_seconds: float,
+        *,
+        origin_ts: float,
+        origin_sample_ts: datetime,
+    ) -> pd.DataFrame:
+        """Map accelerated Prometheus steps to stable logical minute timestamps."""
         out = df.copy()
-        idx = (out["ts"] // step_seconds).astype("int64") * 60
-        out["timestamp"] = pd.to_datetime(idx, unit="s", utc=True)
+        elapsed = ((out["ts"] - origin_ts) // step_seconds).astype("int64")
+        origin = pd.Timestamp(origin_sample_ts)
+        if origin.tzinfo is None:
+            origin = origin.tz_localize("UTC")
+        else:
+            origin = origin.tz_convert("UTC")
+        out["timestamp"] = origin + pd.to_timedelta(elapsed * 60, unit="s")
         return out.drop(columns=["ts"]).drop_duplicates("timestamp").reset_index(drop=True)
 
 
 def frame_to_points(df: pd.DataFrame) -> list[dict]:
-    return [{"timestamp": r["timestamp"].to_pydatetime(), **{m: float(r[m]) for m in METRIC_COLUMNS}}
+     return [{"timestamp": r["timestamp"].to_pydatetime(), **{m: float(r[m]) for m in METRIC_COLUMNS}}
             for _, r in df.iterrows()]
 
 

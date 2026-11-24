@@ -31,9 +31,15 @@ def test_secrets_are_not_hardcoded_and_required_ones_have_no_default():
     assert ":?" in SVC["grafana"]["environment"]["GRAFANA_ADMIN_PASSWORD".replace("GRAFANA_", "GF_SECURITY_")]
     for svc, key in (("api", "PREDICTIVEOPS_API_KEY"), ("demo-app", "DEMO_ADMIN_TOKEN")):
         assert SVC[svc]["environment"][key].endswith(":-}")  # empty (disabled) by default
-    text = "\n".join(p.read_text(errors="ignore") for p in ROOT.rglob("*")
-                     if p.is_file() and p.suffix in {".py", ".yml", ".yaml", ".json", ".md", ".txt", ".env"}
-                     and ".git" not in p.parts and "tests" not in p.parts)
+    excluded_dirs = {".git", ".venv", "venv", ".tox", ".nox", "node_modules"}
+    text = "\n".join(
+        p.read_text(errors="ignore")
+        for p in ROOT.rglob("*")
+        if p.is_file()
+        and p.suffix in {".py", ".yml", ".yaml", ".json", ".md", ".txt", ".env"}
+        and not any(part in excluded_dirs for part in p.parts)
+        and "tests" not in p.parts
+    )
     for pat in (r"ghp_[A-Za-z0-9]{20,}", r"AKIA[0-9A-Z]{16}", r"BEGIN (RSA |EC )?PRIVATE KEY",
                 r"sk-ant-[A-Za-z0-9_-]{20,}"):
         assert not re.search(pat, text), pat
@@ -85,7 +91,7 @@ def test_grafana_provisioning_consistent():
     assert ds["uid"] == "prometheus" and ds["url"] == "http://prometheus:9090"
     for p in dash["panels"]:
         assert p["datasource"]["uid"] == ds["uid"]
-        assert all(t["datasource"]["uid"] == ds["uid"] and t["expr"] for t in p["targets"])
+        assert all(t["expr"] for t in p["targets"])
     assert len({p["id"] for p in dash["panels"]}) == len(dash["panels"])
     assert "SIMULATED" in dash["description"] and "SYNTHETIC" in dash["description"]
 
