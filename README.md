@@ -60,7 +60,8 @@ presenter's guide.
 
 ```bash
 cp .env.example .env     # set TAILSCALE_IP and GRAFANA_ADMIN_PASSWORD
-# TAILSCALE_IP must be the server address returned by: tailscale ip -4
+# Set it automatically to the server's Tailscale IPv4 address.
+sed -i "s/^TAILSCALE_IP=.*/TAILSCALE_IP=$(tailscale ip -4)/" .env
 # Keep .env private; generate a strong Grafana password.
 docker compose up --build
 ```
@@ -79,7 +80,7 @@ alert policy. The demo is **accelerated**: one 5-second step stands for one mode
 ```bash
 curl -X POST localhost:8001/fault -H "X-Admin-Token: $DEMO_ADMIN_TOKEN" -H 'content-type: application/json' \
      -d '{"fault_type":"memory_leak","ramp_minutes":30}'       # disabled unless DEMO_ADMIN_TOKEN is set
-curl localhost:8000/v1/alerts ; curl localhost:8000/v1/audit ; curl localhost:8000/v1/sources
+curl "http://$TAILSCALE_IP:8000/v1/alerts" ; curl "http://$TAILSCALE_IP:8000/v1/audit" ; curl "http://$TAILSCALE_IP:8000/v1/sources"
 curl -X POST localhost:8001/fault/clear -H "X-Admin-Token: $DEMO_ADMIN_TOKEN"
 docker compose --profile canary up -d     # second demo instance labelled as a canary
 docker compose --profile mlflow up -d     # MLflow UI on :5000
