@@ -11,14 +11,17 @@ from app.core.exceptions import ModelNotReadyError
 from app.models.predictor import Predictor
 
 
-def production_model_block_reason(state: ApiState) -> str | None:
-    """Reject demo-trained or ungated models when the API runs in production."""
-    predictor = state.predictor
+def production_model_block_reason(state: ApiState, predictor: Predictor | None = None,
+                                  expected_scope: str | None = None) -> str | None:
+    """Reject demo-trained, mismatched-scope or ungated models in production."""
+    predictor = predictor or state.predictor
     if predictor is None:
         return "no champion model loaded"
     if state.settings.env != "production":
         return None
     metadata = predictor.bundle.metadata
+    if expected_scope is not None and metadata.get("scope") != expected_scope:
+        return f"loaded model scope does not match required {expected_scope!r} scope"
     source = str(metadata.get("data_source", "unknown")).lower().split("+")
     if "synthetic" in source or "unknown" in source:
         return "model was not trained exclusively on identified production data"
