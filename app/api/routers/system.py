@@ -79,7 +79,11 @@ def sources(request: Request) -> dict:
     pollers = getattr(request.app.state, "pollers", {})
     if request.app.state.api.settings.env == "production":
         return {"prometheus": {"enabled": True, "scopes": {
-            scope: {"step_seconds": poller.step, "services": poller.status}
+            scope: {
+                "step_seconds": poller.step,
+                "poll_seconds": poller.interval,
+                "services": poller.status,
+            }
             for scope, poller in sorted(pollers.items())
         }}}
     poller = request.app.state.poller
