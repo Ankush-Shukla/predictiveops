@@ -29,6 +29,7 @@ services:
       trainer: { condition: service_completed_successfully }
     environment:
       <<: *app-env
+      PREDICTIVEOPS_ENV: production
       PREDICTIVEOPS_PROMETHEUS_ENABLED: "true"
       PREDICTIVEOPS_PROMETHEUS_URL: http://prometheus:9090
       PREDICTIVEOPS_PROMETHEUS_SERVICES: demo-app
