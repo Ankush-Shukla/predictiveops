@@ -14,9 +14,8 @@ from app.core.exceptions import PredictiveOpsError
 
 SERVICE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
-# One expression per model metric. `$service` is replaced by a VALIDATED service name only.
-# These read the demo target's SIMULATED gauges; to use real Node Exporter / application metrics,
-# override the queries AND retrain on data with the same scales (see README).
+# Legacy development-only combined-model queries. Production uses HOST_QUERIES and
+# APPLICATION_QUERIES below; the production Compose stack has no demo target.
 DEFAULT_QUERIES: dict[str, str] = {m: f'avg(demo_{m}{{service="$service"}})' for m in METRIC_COLUMNS}
 
 HOST_QUERIES: dict[str, str] = {
@@ -110,7 +109,7 @@ class PrometheusClient:
         return {float(t): float(v) for t, v in result[0]["values"]}
 
     def fetch_window(self, service: str, *, end: float, steps: int, step_seconds: float) -> pd.DataFrame:
-        """Aligned frame (real timestamps in seconds) holding only steps where ALL 8 metrics exist."""
+        """Aligned frame containing only sample steps where every configured query has a value."""
         if not SERVICE_RE.fullmatch(service):
             raise PrometheusError(f"invalid service name {service!r}")
         aligned_end = math.floor(end / step_seconds) * step_seconds
