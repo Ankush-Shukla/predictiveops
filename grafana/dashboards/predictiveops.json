@@ -24,9 +24,9 @@
   "panels": [
     {
       "id": 1,
-      "title": "Scrape targets up",
+      "title": "Prometheus targets up",
       "type": "stat",
-      "description": "",
+      "description": "Number of currently healthy scrape targets.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -42,13 +42,14 @@
           "refId": "A",
           "expr": "sum(up)",
           "legendFormat": "Targets up",
-          "instant": true
+          "instant": true,
+          "format": "time_series"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 0,
+          "decimals": 1,
           "color": {
             "mode": "palette-classic"
           }
@@ -72,7 +73,7 @@
     },
     {
       "id": 2,
-      "title": "Host CPU utilization",
+      "title": "Host CPU",
       "type": "stat",
       "description": "",
       "datasource": {
@@ -90,7 +91,8 @@
           "refId": "A",
           "expr": "100 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100",
           "legendFormat": "CPU",
-          "instant": true
+          "instant": true,
+          "format": "time_series"
         }
       ],
       "fieldConfig": {
@@ -122,7 +124,7 @@
     },
     {
       "id": 3,
-      "title": "Host memory utilization",
+      "title": "Host memory",
       "type": "stat",
       "description": "",
       "datasource": {
@@ -140,7 +142,8 @@
           "refId": "A",
           "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)",
           "legendFormat": "Memory",
-          "instant": true
+          "instant": true,
+          "format": "time_series"
         }
       ],
       "fieldConfig": {
@@ -172,7 +175,7 @@
     },
     {
       "id": 4,
-      "title": "Root filesystem used",
+      "title": "Root filesystem",
       "type": "stat",
       "description": "",
       "datasource": {
@@ -189,8 +192,9 @@
         {
           "refId": "A",
           "expr": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!~\"tmpfs|overlay\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!~\"tmpfs|overlay\"})",
-          "legendFormat": "Root filesystem",
-          "instant": true
+          "legendFormat": "Used",
+          "instant": true,
+          "format": "time_series"
         }
       ],
       "fieldConfig": {
@@ -222,7 +226,7 @@
     },
     {
       "id": 5,
-      "title": "Host CPU utilization",
+      "title": "Host CPU utilisation",
       "type": "timeseries",
       "description": "",
       "datasource": {
@@ -233,14 +237,15 @@
         "x": 0,
         "y": 4,
         "w": 12,
-        "h": 8
+        "h": 7
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "100 - avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100",
-          "legendFormat": "{{instance}}",
-          "instant": false
+          "expr": "100 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100",
+          "legendFormat": "CPU",
+          "instant": false,
+          "format": "time_series"
         }
       ],
       "fieldConfig": {
@@ -259,14 +264,9 @@
             "fillOpacity": 12,
             "showPoints": "never",
             "spanNulls": false,
-            "axisCenteredZero": false,
-            "axisColor": "text",
-            "axisLabel": "",
+            "axisPlacement": "auto",
             "scaleDistribution": {
               "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
             }
           }
         },
@@ -276,7 +276,7 @@
         "legend": {
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": false
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -286,7 +286,7 @@
     },
     {
       "id": 6,
-      "title": "Host memory breakdown",
+      "title": "Host memory pressure",
       "type": "timeseries",
       "description": "",
       "datasource": {
@@ -297,25 +297,22 @@
         "x": 12,
         "y": 4,
         "w": 12,
-        "h": 8
+        "h": 7
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
-          "legendFormat": "Used",
-          "instant": false
-        },
-        {
-          "refId": "B",
-          "expr": "node_memory_MemAvailable_bytes",
-          "legendFormat": "Available",
-          "instant": false
+          "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)",
+          "legendFormat": "Memory used",
+          "instant": false,
+          "format": "time_series"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "bytes",
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
           "decimals": 1,
           "color": {
             "mode": "palette-classic"
@@ -327,14 +324,9 @@
             "fillOpacity": 12,
             "showPoints": "never",
             "spanNulls": false,
-            "axisCenteredZero": false,
-            "axisColor": "text",
-            "axisLabel": "",
+            "axisPlacement": "auto",
             "scaleDistribution": {
               "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
             }
           }
         },
@@ -354,7 +346,7 @@
     },
     {
       "id": 7,
-      "title": "Network throughput",
+      "title": "Host network throughput",
       "type": "timeseries",
       "description": "",
       "datasource": {
@@ -363,22 +355,24 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 12,
+        "y": 11,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (device) (rate(node_network_receive_bytes_total{device!~\"lo|veth.*|docker.*|br-.*\"}[5m]))",
-          "legendFormat": "{{device}} RX",
-          "instant": false
+          "expr": "sum by (device) (rate(node_network_receive_bytes_total{device!~\"lo|veth.*|docker.*|br-.*|tailscale.*|tun.*|wg.*\"}[5m]))",
+          "legendFormat": "RX {{device}}",
+          "instant": false,
+          "format": "time_series"
         },
         {
           "refId": "B",
-          "expr": "sum by (device) (rate(node_network_transmit_bytes_total{device!~\"lo|veth.*|docker.*|br-.*\"}[5m]))",
-          "legendFormat": "{{device}} TX",
-          "instant": false
+          "expr": "sum by (device) (rate(node_network_transmit_bytes_total{device!~\"lo|veth.*|docker.*|br-.*|tailscale.*|tun.*|wg.*\"}[5m]))",
+          "legendFormat": "TX {{device}}",
+          "instant": false,
+          "format": "time_series"
         }
       ],
       "fieldConfig": {
@@ -395,14 +389,9 @@
             "fillOpacity": 12,
             "showPoints": "never",
             "spanNulls": false,
-            "axisCenteredZero": false,
-            "axisColor": "text",
-            "axisLabel": "",
+            "axisPlacement": "auto",
             "scaleDistribution": {
               "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
             }
           }
         },
@@ -422,7 +411,7 @@
     },
     {
       "id": 8,
-      "title": "Filesystem capacity",
+      "title": "Filesystem capacity by mount",
       "type": "timeseries",
       "description": "",
       "datasource": {
@@ -431,7 +420,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 12,
+        "y": 11,
         "w": 12,
         "h": 8
       },
@@ -440,7 +429,8 @@
           "refId": "A",
           "expr": "100 * (1 - node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs\"})",
           "legendFormat": "{{mountpoint}}",
-          "instant": false
+          "instant": false,
+          "format": "time_series"
         }
       ],
       "fieldConfig": {
@@ -459,14 +449,9 @@
             "fillOpacity": 12,
             "showPoints": "never",
             "spanNulls": false,
-            "axisCenteredZero": false,
-            "axisColor": "text",
-            "axisLabel": "",
+            "axisPlacement": "auto",
             "scaleDistribution": {
               "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
             }
           }
         },
@@ -476,7 +461,7 @@
         "legend": {
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": false
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -486,7 +471,70 @@
     },
     {
       "id": 9,
-      "title": "PredictiveOps alert events",
+      "title": "Container inventory · one row per container",
+      "type": "table",
+      "description": "Each container appears once in this inventory. CPU is in cores; memory is working set; network is bytes per second.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 24,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{image!=\"\",name!=\"\"}[5m]))",
+          "legendFormat": "CPU cores",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (name) (container_memory_working_set_bytes{image!=\"\",name!=\"\"})",
+          "legendFormat": "Memory working set",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (name) (rate(container_network_receive_bytes_total{image!=\"\",name!=\"\"}[5m]))",
+          "legendFormat": "Network RX",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "D",
+          "expr": "sum by (name) (rate(container_network_transmit_bytes_total{image!=\"\",name!=\"\"}[5m]))",
+          "legendFormat": "Network TX",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Container CPU · % of one core",
       "type": "timeseries",
       "description": "",
       "datasource": {
@@ -494,22 +542,25 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "x": 12,
-        "y": 20,
+        "x": 0,
+        "y": 28,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (level) (rate(predictiveops_alerts_total[5m]))",
-          "legendFormat": "{{level}}",
-          "instant": false
+          "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{image!=\"\",name!=\"\"}[5m])) * 100",
+          "legendFormat": "{{name}}",
+          "instant": false,
+          "format": "time_series"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "ops",
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
           "decimals": 1,
           "color": {
             "mode": "palette-classic"
@@ -521,14 +572,9 @@
             "fillOpacity": 12,
             "showPoints": "never",
             "spanNulls": false,
-            "axisCenteredZero": false,
-            "axisColor": "text",
-            "axisLabel": "",
+            "axisPlacement": "auto",
             "scaleDistribution": {
               "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
             }
           }
         },
@@ -538,7 +584,7 @@
         "legend": {
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": false
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -547,8 +593,66 @@
       }
     },
     {
-      "id": 10,
-      "title": "API request rate",
+      "id": 11,
+      "title": "Container memory working set",
+      "type": "timeseries",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (name) (container_memory_working_set_bytes{image!=\"\",name!=\"\"})",
+          "legendFormat": "{{name}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 2,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisPlacement": "auto",
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Container network throughput",
       "type": "timeseries",
       "description": "",
       "datasource": {
@@ -557,16 +661,147 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 36,
         "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (name) (rate(container_network_receive_bytes_total{image!=\"\",name!=\"\"}[5m]))",
+          "legendFormat": "RX {{name}}",
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (name) (rate(container_network_transmit_bytes_total{image!=\"\",name!=\"\"}[5m]))",
+          "legendFormat": "TX {{name}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisPlacement": "auto",
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "Container filesystem I/O",
+      "type": "timeseries",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 36,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (name) (rate(container_fs_reads_bytes_total{image!=\"\",name!=\"\"}[5m]))",
+          "legendFormat": "Read {{name}}",
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (name) (rate(container_fs_writes_bytes_total{image!=\"\",name!=\"\"}[5m]))",
+          "legendFormat": "Write {{name}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisPlacement": "auto",
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "title": "Application request rate",
+      "type": "timeseries",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 8,
         "h": 7
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (status) (rate(predictiveops_http_requests_total[5m]))",
-          "legendFormat": "HTTP {{status}}",
-          "instant": false
+          "expr": "sum by (service) (rate(predictiveops_app_requests_total[5m]))",
+          "legendFormat": "{{service}}",
+          "instant": false,
+          "format": "time_series"
         }
       ],
       "fieldConfig": {
@@ -583,14 +818,9 @@
             "fillOpacity": 12,
             "showPoints": "never",
             "spanNulls": false,
-            "axisCenteredZero": false,
-            "axisColor": "text",
-            "axisLabel": "",
+            "axisPlacement": "auto",
             "scaleDistribution": {
               "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
             }
           }
         },
@@ -600,7 +830,7 @@
         "legend": {
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": false
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -609,8 +839,186 @@
       }
     },
     {
-      "id": 11,
-      "title": "Remediation decisions",
+      "id": 15,
+      "title": "Application p95 latency",
+      "type": "timeseries",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 44,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (service, le) (rate(predictiveops_app_request_duration_seconds_bucket[5m]))) * 1000",
+          "legendFormat": "{{service}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisPlacement": "auto",
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "title": "Application 5xx rate",
+      "type": "timeseries",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 44,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * sum by (service) (rate(predictiveops_app_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum by (service) (rate(predictiveops_app_requests_total[5m])), 1e-9)",
+          "legendFormat": "{{service}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisPlacement": "auto",
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "title": "PredictiveOps failure probability",
+      "type": "timeseries",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 51,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "predictiveops_failure_probability * 100",
+          "legendFormat": "{{series_id}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisPlacement": "auto",
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "title": "Alert events by severity",
       "type": "timeseries",
       "description": "",
       "datasource": {
@@ -619,16 +1027,17 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 28,
+        "y": 51,
         "w": 12,
         "h": 7
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (outcome) (rate(predictiveops_remediation_decisions_total[5m]))",
-          "legendFormat": "{{outcome}}",
-          "instant": false
+          "expr": "sum by (level) (rate(predictiveops_alerts_total[5m]))",
+          "legendFormat": "{{level}}",
+          "instant": false,
+          "format": "time_series"
         }
       ],
       "fieldConfig": {
@@ -645,150 +1054,11 @@
             "fillOpacity": 12,
             "showPoints": "never",
             "spanNulls": false,
-            "axisCenteredZero": false,
-            "axisColor": "text",
-            "axisLabel": "",
+            "axisPlacement": "auto",
             "scaleDistribution": {
               "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
             }
           }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": false
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 12,
-      "title": "Container CPU usage",
-      "type": "timeseries",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 35,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{ image!=\"\" }[5m])) * 100",
-          "legendFormat": "{{name}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "min": 0,
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 13,
-      "title": "Container memory working set",
-      "type": "timeseries",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 35,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "container_memory_working_set_bytes{ image!=\"\" }",
-          "legendFormat": "{{name}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "type": "timeseries",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "fillOpacity": 12,
-            "showPoints": "never",
-            "spanNulls": false,
-            "axisCenteredZero": false,
-            "axisColor": "text",
-            "axisLabel": "",
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "decimals": 2,
-          "unit": "s"
         },
         "overrides": []
       },
@@ -802,96 +1072,17 @@
           "mode": "multi",
           "sort": "desc"
         }
-      },
-      "id": 14,
-      "title": "Application p95 latency",
-      "description": "Requires predictiveops_app_request_duration_seconds_bucket instrumentation.",
-      "gridPos": {
-        "x": 0,
-        "y": 43,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "histogram_quantile(0.95, sum by (service, le) (rate(predictiveops_app_request_duration_seconds_bucket[5m])))",
-          "legendFormat": "{{service}}",
-          "instant": false
-        }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "fillOpacity": 12,
-            "showPoints": "never",
-            "spanNulls": false,
-            "axisCenteredZero": false,
-            "axisColor": "text",
-            "axisLabel": "",
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "decimals": 2,
-          "unit": "percent",
-          "min": 0,
-          "max": 100
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 15,
-      "title": "Application 5xx error rate",
-      "description": "Requires predictiveops_app_requests_total with service and status labels.",
-      "gridPos": {
-        "x": 12,
-        "y": 43,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "100 * sum by (service) (rate(predictiveops_app_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum by (service) (rate(predictiveops_app_requests_total[5m])), 1e-9)",
-          "legendFormat": "{{service}}",
-          "instant": false
-        }
-      ]
+      }
     }
   ],
-  "refresh": "10s",
+  "refresh": "15s",
   "schemaVersion": 39,
   "style": "dark",
   "tags": [
     "predictiveops",
-    "infrastructure"
+    "infrastructure",
+    "containers",
+    "observability"
   ],
   "templating": {
     "list": []
@@ -900,10 +1091,19 @@
     "from": "now-1h",
     "to": "now"
   },
-  "timepicker": {},
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "15s",
+      "30s",
+      "1m",
+      "5m",
+      "15m"
+    ]
+  },
   "timezone": "browser",
-  "title": "PredictiveOps · Infrastructure",
-  "description": "Live host and container telemetry. The bundled model is trained on SYNTHETIC data and is not production-validated.",
+  "title": "PredictiveOps · Infrastructure & Containers",
+  "description": "Host health, one-row-per-container resource inventory, container trends, application SLO signals and model telemetry. Container resource metrics are sourced from cAdvisor.",
   "uid": "predictiveops",
-  "version": 4
+  "version": 5
 }
