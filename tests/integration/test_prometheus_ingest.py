@@ -135,6 +135,9 @@ def test_scope_query_contracts_and_host_point_defaults():
                            required_metrics=APPLICATION_METRIC_COLUMNS)
     assert set(host.metrics) == set(HOST_METRIC_COLUMNS)
     assert set(app.metrics) == set(APPLICATION_METRIC_COLUMNS)
+    assert 'or vector(0)' in APPLICATION_QUERIES["error_rate"]
+    assert 'tailscale.*' in HOST_QUERIES["network_rx_mbps"]
+    assert 'tailscale.*' in HOST_QUERIES["network_tx_mbps"]
     with pytest.raises(ValueError, match="required metrics"):
         PrometheusClient("http://p", queries=HOST_QUERIES)
 
