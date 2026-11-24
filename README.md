@@ -141,25 +141,19 @@ live remediation until its target allowlist and action path have been reviewed.
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /health`, `/ready` | liveness, readiness (503 until a model is loaded) |
-| `GET /v1/model` | version, threshold, evaluation, data source |
-| `POST /v1/predict` | score the latest sample from >= 30 contiguous 1-minute samples |
-| `POST /v1/metrics/ingest` | buffer, score every new minute, run the alert policy (`X-API-Key` if configured) |
-| `GET /v1/policy`, `POST /v1/policy/evaluate`, `GET /v1/alerts`, `GET /v1/audit` | policy state, preview, alerts, remediation audit |
-| `POST /v1/canary/evaluate`, `GET /v1/canary[/{id}]` | canary decision and history (`X-API-Key` if configured) |
-| `POST /v1/simulate`, `POST /v1/canary/simulate` | SYNTHETIC demos, no side effects |
-| `GET /v1/series[/{id}]`, `GET /v1/sources`, `GET /metrics` | live series, poller status, Prometheus metrics |
+| `GET /health`, `GET /ready` | Liveness and readiness; production requires both qualified scope models |
+| `GET /v1/model` | Model metadata; production returns separate host and application models |
+| `GET /v1/sources` | Prometheus source and per-scope poller status |
+| `GET /v1/series[/{id}]` | Buffered time series and latest prediction state |
+| `GET /v1/alerts`, `GET /v1/audit`, `GET /v1/policy` | Alert history, audit log and policy state |
+| `GET /metrics` | PredictiveOps Prometheus instrumentation |
+| `POST /v1/predict`, `POST /v1/metrics/ingest` | Legacy combined-model development endpoints; not used by production scope pollers |
+| `POST /v1/simulate`, canary routes | Development-only; not registered when `ENV=production` |
 
-```bash
-curl localhost:8000/v1/model
-curl -X POST localhost:8000/v1/simulate -H 'content-type: application/json' -d '{"fault_type":"memory_leak","seed":42}'
-curl -X POST localhost:8000/v1/policy/evaluate -H 'content-type: application/json' \
-     -d '{"probabilities":[0.9,0.9,0.9,0.9,0.9,0.9],"threshold":0.2}'
-curl -X POST localhost:8000/v1/metrics/ingest -H 'content-type: application/json' -d '{"series_id":"checkout","samples":[{"timestamp":"2025-01-01T00:00:00Z","cpu_pct":20,"memory_pct":50,"disk_io_util_pct":10,"network_rx_mbps":4,"network_tx_mbps":6,"request_rate_rps":90,"latency_p95_ms":110,"error_rate":0.004}]}'
-```
-Ingestion rules: samples must be 1 minute apart; duplicates and out-of-order samples are rejected; a gap clears the
-series history (features need regular spacing). Without a model the API still starts and prediction endpoints
-return `model_not_ready`.
+The production API polls host metrics and configured application targets independently. A series
+needs at least the model's required contiguous one-minute history before the first prediction.
+Missing exporters, missing metrics, stale samples and unqualified models are reported as source or
+readiness failures; they are never converted into a healthy zero-valued prediction.
 
 ## Alert policy and safe remediation
 
@@ -175,12 +169,13 @@ Remediation passes these gates in order: a configured target for the series, an 
 (900 s), an hourly cap (4), dry-run (**on by default**), and in live mode a container carrying the label
 `predictiveops.managed=true` (`rollback_canary` also needs `predictiveops.role=canary`). Nothing can run an arbitrary
 command. Cooldowns and caps are read from the SQLite audit log, so they survive restarts; every outcome is audited.
-To try a dry run: `PREDICTIVEOPS_REMEDIATION_ENABLED=true` and
-`PREDICTIVEOPS_REMEDIATION_TARGETS={"demo-live":{"container":"my-app","action":"restart_container"}}`.
+Production remediation targets are empty by default. Add a reviewed service-to-container mapping
+only after confirming the target's `predictiveops.managed=true` label. Keep dry-run enabled until
+the action has been tested against a disposable container.
 
-## Canary validation
+## Canary validation (development only)
 
-`POST /v1/canary/evaluate` takes baseline and candidate samples for a named `service`; the same model scores both and
+Canary simulation routes are not registered in production mode. `POST /v1/canary/evaluate` takes baseline and candidate samples for a named `service`; the same model scores both and
 only overlapping minutes are compared. Defaults (override with `PREDICTIVEOPS_CANARY` JSON): **hold** with fewer than
 20 scored minutes or inconclusive evidence; **rollback** for 5 consecutive minutes at >= 80 % risk while the baseline is
 not, or >= 30 % alerting minutes with mean risk >= 10 points above baseline; **promote** for <= 5 % alerting minutes
@@ -194,10 +189,10 @@ starts after the decision is promoted.** Use `{"min_observation_minutes": 60}` o
 |---|---|
 | Core | `ENV`, `LOG_LEVEL`, `LOG_JSON`, `DATA_DIR`, `SQLITE_PATH`, `MODEL_DIR`, `HORIZON_MINUTES` (15-30), `SYNTHETIC_SEED`, `INGEST_BUFFER_MINUTES` |
 | MLflow and gates | `MLFLOW_TRACKING_URI`, `MLFLOW_EXPERIMENT`, `MLFLOW_MODEL_NAME`, `GATE_MIN_F1` (0.70), `GATE_MAX_FPR` (0.05) |
-| Security | `API_KEY` (protects ingest and canary evaluate when set; empty values are ignored) |
-| Prometheus polling | `PROMETHEUS_ENABLED`, `PROMETHEUS_URL`, `PROMETHEUS_SERVICES`, `PROMETHEUS_STEP_SECONDS`, `PROMETHEUS_POLL_SECONDS`, `PROMETHEUS_LOOKBACK_STEPS` |
+| Security | `API_KEY` (protects write endpoints when set; empty values are ignored) |
+| Prometheus polling | `PROMETHEUS_ENABLED`, `PROMETHEUS_URL`, `PROMETHEUS_HOST_SERIES_ID`, `PROMETHEUS_APPLICATION_SERVICES`, `PROMETHEUS_STEP_SECONDS`, `PROMETHEUS_POLL_SECONDS`, `PROMETHEUS_LOOKBACK_STEPS` |
 | Policy and remediation | `POLICY_SUSTAIN_ALERT`, `POLICY_SUSTAIN_REMEDIATE`, `POLICY_REMEDIATE_THRESHOLD`, `REMEDIATION_ENABLED`, `DRY_RUN`, `REMEDIATION_TARGETS` (JSON), `REMEDIATION_COOLDOWN_SECONDS`, `MAX_ACTIONS_PER_HOUR` |
-| Canary | `CANARY` (JSON), `CANARY_TARGETS` (JSON) |
+| Development compatibility | `PROMETHEUS_SERVICES` (legacy combined-model polling; never use in production) |
 
 Secrets are only ever read from the environment or GitHub secrets; required ones (Grafana password) have no default.
 
