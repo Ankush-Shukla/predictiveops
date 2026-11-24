@@ -15,13 +15,16 @@ from app.api.errors import register_error_handlers
 from app.api.poller import PrometheusPoller
 from app.api.routers import canary, policy, predict, simulate, system
 from app.api.state import ApiState
-from app.core.domain import APPLICATION_METRIC_COLUMNS, HOST_METRIC_COLUMNS
 from app.core.config import Settings, get_settings
+from app.core.domain import APPLICATION_METRIC_COLUMNS, HOST_METRIC_COLUMNS
 from app.core.exceptions import PredictiveOpsError
 from app.core.logging import configure_logging, get_logger
 from app.models.predictor import Predictor
-from app.services.prometheus_client import (APPLICATION_QUERIES, HOST_QUERIES,
-                                           PrometheusClient)
+from app.services.prometheus_client import (
+    APPLICATION_QUERIES,
+    HOST_QUERIES,
+    PrometheusClient,
+)
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 log = get_logger("app.api")
@@ -40,7 +43,10 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
                 for scope in ("host", "application"):
                     try:
                         loaded[scope] = Predictor.from_champion(settings.model_dir / scope)
-                        log.info("scope model loaded", extra={"scope": scope, "version": loaded[scope].version})
+                        log.info(
+                            "scope model loaded",
+                            extra={"scope": scope, "version": loaded[scope].version},
+                        )
                     except PredictiveOpsError as exc:
                         log.warning("scope model unavailable", extra={"scope": scope, "reason": str(exc)})
                 app.state.api.set_scope_predictors(loaded)
