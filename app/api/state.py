@@ -39,6 +39,8 @@ class Collectors:
                               ["decision"], registry=registry)
         self.model_info = Gauge("predictiveops_model_info", "Loaded model", ["version", "data_source"],
                                 registry=registry)
+        self.model_scope_info = Gauge("predictiveops_model_scope_info", "Qualified model scope",
+                                      ["scope", "version", "data_source"], registry=registry)
 
 
 @dataclass
@@ -67,13 +69,16 @@ class ApiState:
         if predictor is not None:
             scope = str(predictor.bundle.metadata.get("scope", "combined"))
             self.scope_predictors[scope] = predictor
-            self.collectors.model_info.labels(
-                version=predictor.version,
-                data_source=str(predictor.bundle.metadata.get("data_source", "unknown"))).set(1)
+            data_source = str(predictor.bundle.metadata.get("data_source", "unknown"))
+            self.collectors.model_info.labels(version=predictor.version, data_source=data_source).set(1)
+            self.collectors.model_scope_info.labels(
+                scope=scope, version=predictor.version, data_source=data_source).set(1)
 
     def set_scope_predictors(self, predictors: dict[str, Predictor]) -> None:
         self.scope_predictors = dict(predictors)
         for predictor in self.scope_predictors.values():
-            self.collectors.model_info.labels(
-                version=predictor.version,
-                data_source=str(predictor.bundle.metadata.get("data_source", "unknown"))).set(1)
+            scope = str(predictor.bundle.metadata.get("scope", "unknown"))
+            data_source = str(predictor.bundle.metadata.get("data_source", "unknown"))
+            self.collectors.model_info.labels(version=predictor.version, data_source=data_source).set(1)
+            self.collectors.model_scope_info.labels(
+                scope=scope, version=predictor.version, data_source=data_source).set(1)
