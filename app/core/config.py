@@ -28,7 +28,9 @@ class Settings(BaseSettings):
     sqlite_path: Path = Path("data/generated/predictiveops.sqlite")
     prometheus_url: str = "http://localhost:9090"
     prometheus_enabled: bool = False  # poll Prometheus for live series
-    prometheus_services: str = ""  # comma-separated `service` label values, e.g. "demo-app"
+    prometheus_services: str = ""  # legacy combined-model services; development only
+    prometheus_host_series_id: str = "home-server"
+    prometheus_application_services: str = ""  # comma-separated stable service labels
     prometheus_step_seconds: float = Field(default=60.0, ge=1, le=3600)  # one model "minute" per step
     prometheus_poll_seconds: float = Field(default=10.0, ge=1, le=3600)
     prometheus_lookback_steps: int = Field(default=90, ge=30, le=1440)
@@ -65,6 +67,10 @@ class Settings(BaseSettings):
     @property
     def prometheus_service_list(self) -> list[str]:
         return [x.strip() for x in self.prometheus_services.split(",") if x.strip()]
+
+    @property
+    def prometheus_application_service_list(self) -> list[str]:
+        return [x.strip() for x in self.prometheus_application_services.split(",") if x.strip()]
 
     def policy_config(self) -> PolicyConfig:
         return PolicyConfig(
