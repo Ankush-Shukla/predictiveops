@@ -58,6 +58,9 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=2d
       - --web.enable-lifecycle
+      - --config.expand-env
+    environment:
+      TAILSCALE_IP: ${TAILSCALE_IP:?set TAILSCALE_IP in .env}
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/targets:/etc/prometheus/targets:ro
@@ -82,9 +85,17 @@ services:
 
   node-exporter:
     image: prom/node-exporter:v1.9.1
-    command: [ "--path.rootfs=/host" ]
+    command:
+      - --path.rootfs=/host
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --web.listen-address=${TAILSCALE_IP:?set TAILSCALE_IP in .env}:9100
+    network_mode: host
     pid: host
-    volumes: [ "/:/host:ro,rslave" ]            # Linux hosts; on Docker Desktop this shows the VM, not your machine
+    volumes:
+      - /:/host:ro,rslave
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
     restart: unless-stopped
 
   grafana:
