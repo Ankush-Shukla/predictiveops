@@ -32,8 +32,10 @@ stable application metric contract is:
 
 PredictiveOps derives request rate from the request counter, p95 latency from the histogram,
 and error rate from 5xx requests divided by all requests. Container resource metrics are joined
-by the configured service/container identity. Every application must have its own stable
-`service` label and one-minute series identity.
+by the Docker container label `predictiveops.service=<service>` (cAdvisor exposes this as
+`container_label_predictiveops_service`). Every application must have that label, expose the
+Prometheus HTTP contract above, and use the same stable `service` value in
+`prometheus/targets/applications.yml` and `PREDICTIVEOPS_PROMETHEUS_APPLICATION_SERVICES`.
 
 Applications that do not expose this contract can still be scraped and visualized, but they are
 not eligible for model inference until an explicit metric adapter is configured. Missing
