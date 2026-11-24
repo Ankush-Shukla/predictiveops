@@ -27,8 +27,8 @@ HOST_QUERIES: dict[str, str] = {
         'device!~"lo|veth.*|docker.*|br-.*|tailscale.*|tun.*|wg.*"}[5m])) * 8 / 1e6'
     ),
     "network_tx_mbps": (
-        'sum(rate(node_network_transmit_bytes_total{device!~"lo|veth.*|docker.*|br-.*"}[5m])) '
-        '* 8 / 1e6'
+        'sum(rate(node_network_transmit_bytes_total{'
+        'device!~"lo|veth.*|docker.*|br-.*|tailscale.*|tun.*|wg.*"}[5m])) * 8 / 1e6'
     ),
 }
 
