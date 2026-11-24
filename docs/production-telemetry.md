@@ -21,6 +21,12 @@ The host model must be trained with exactly these fields and incident labels for
 exhaustion. Root filesystem capacity is monitored separately as a deterministic safety alert;
 it is not silently substituted for disk I/O utilization.
 
+Node Exporter runs in the host PID, mount and network namespaces so its CPU, disk and network
+counters describe the actual machine rather than the exporter container. Its HTTP listener binds
+only to the configured `TAILSCALE_IP:9100`; Prometheus expands that same environment variable
+when loading its scrape configuration. Do not change this to `0.0.0.0:9100` or expose the
+exporter on an untrusted interface.
+
 ## Application scope
 
 Each monitored application must expose Prometheus metrics on an HTTP scrape endpoint. The
