@@ -1,0 +1,7 @@
+# Add one group per application. Replace the example target with a reachable
+# host:port exposing /metrics, and keep the service label stable across restarts.
+# Application metric names and required labels are documented in docs/production-telemetry.md.
+- targets: []
+  labels:
+    service: example-application
+    environment: production
