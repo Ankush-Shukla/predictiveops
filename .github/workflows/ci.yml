@@ -36,7 +36,7 @@ jobs:
           docker run --rm --entrypoint promtool -v "$PWD/prometheus:/p:ro" -v "$PWD/monitoring:/m:ro" \
             prom/prometheus:v3.5.0 check rules /m/alert_rules.yml
           docker run --rm --entrypoint sh -v "$PWD/prometheus:/p:ro" -v "$PWD/monitoring:/m:ro" \
-            prom/prometheus:v3.5.0 -c "sed 's/\\${TAILSCALE_IP}/127.0.0.1/g' /p/prometheus.yml > /tmp/prometheus.yml && mkdir -p /etc/prometheus && cp /m/alert_rules.yml /etc/prometheus/ && promtool check config /tmp/prometheus.yml"
+            prom/prometheus:v3.5.0 -c "sed 's/[$]{TAILSCALE_IP}/127.0.0.1/g' /p/prometheus.yml > /tmp/prometheus.yml && mkdir -p /etc/prometheus && cp /m/alert_rules.yml /etc/prometheus/ && promtool check config /tmp/prometheus.yml"
       - name: Images build
         run: |
           docker build -f docker/Dockerfile --target runtime -t predictiveops-runtime:ci .
