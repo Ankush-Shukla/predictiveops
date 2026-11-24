@@ -18,7 +18,11 @@ type Snapshot = {
 const empty: Snapshot = { health:null, ready:null, model:null, sources:null, series:[], alerts:[], audit:[], policy:null, errors:[] };
 const get = async (path: string) => {
   const response = await fetch(path, { headers: { Accept: "application/json" } });
-  if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    if (path === "/ready") return body;
+    throw new Error(`${path}: HTTP ${response.status}${body?.detail ? ": " + body.detail : ""}`);
+  }
   return response.json();
 };
 const first = (obj: AnyRecord | null, keys: string[], fallback: any = "—") => {
