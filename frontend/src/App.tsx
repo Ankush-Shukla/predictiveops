@@ -160,7 +160,7 @@ function App() {
           {page === "Overview" && <>
             <section className="stat-grid">
               <StatCard icon={<ShieldCheck/>} label="MODEL STATUS" value={isReady ? "Ready" : "Not ready"} detail={modelCount ? `Host ${hostModel ? "loaded" : "missing"} · Applications ${applicationModel ? "loaded" : "missing"}` : "Champion model unavailable"} tone={isReady ? "green" : "amber"} />
-              <StatCard icon={<Server/>} label="MONITORED SERIES" value={String(serviceCount)} detail="Active in-memory series" tone="blue"/>
+              <StatCard icon={<Server/>} label="CONTAINERS" value={String(containerCount)} detail="Live cAdvisor resource inventory" tone="blue"/>
               <StatCard icon={<Bell/>} label="RECENT ALERTS" value={String(alertCount)} detail="Latest 50 records" tone={alertCount ? "amber" : "green"}/>
               <StatCard icon={<Zap/>} label="PROMETHEUS" value={sourceHealth} detail={prometheus?.enabled ? `${healthyTargets}/${sourceCount} targets reporting` : "Polling is not enabled"} tone={sourceHealth === "Healthy" ? "green" : "amber"}/>
             </section>
