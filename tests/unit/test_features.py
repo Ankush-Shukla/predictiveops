@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.core.domain import METRIC_COLUMNS
+from app.core.domain import HOST_METRIC_COLUMNS, METRIC_COLUMNS
 from app.core.exceptions import DataValidationError
 from app.features.builder import FeatureBuilder, FeatureConfig
 from data.synthetic.generator import GeneratorConfig, generate_dataset
@@ -77,6 +77,19 @@ def test_training_inference_parity(df):
         last = fb.transform_last(window)
         np.testing.assert_allclose(last.to_numpy()[0], batch.loc[t].to_numpy(), rtol=1e-7, atol=1e-7)
         assert list(last.columns) == fb.feature_names
+
+
+
+def test_host_scope_features_do_not_require_application_metrics(df):
+    metrics = ("timestamp", "series_id", *HOST_METRIC_COLUMNS)
+    host_only = df[list(metrics)].copy()
+    fb = FeatureBuilder(FeatureConfig(metrics=HOST_METRIC_COLUMNS))
+    features = fb.transform(host_only)
+    assert fb.schema.version == "2"
+    assert features.columns.tolist() == fb.feature_names
+    assert all(name.startswith(tuple(f"{m}__" for m in HOST_METRIC_COLUMNS))
+               for name in features.columns)
+    assert features.iloc[-1].notna().all()
 
 
 def test_input_validation(df):
