@@ -1,3 +1,4 @@
+import copy
 import time
 
 import pytest
@@ -6,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.api.main import app_factory, create_app
 from app.core.config import Settings
 from app.core.exceptions import PredictiveOpsError
+from app.models.predictor import Predictor
 from app.policies import actions
 from app.policies.actions import LazyDockerExecutor
 from data.synthetic.generator import GeneratorConfig, generate_dataset
@@ -37,6 +39,36 @@ def test_startup_without_model_stays_alive_but_not_ready(tmp_path):
     with TestClient(create_app(s)) as c:
         assert c.get("/health").status_code == 200 and c.get("/ready").status_code == 503
         assert c.get("/").status_code == 200  # dashboard still served
+
+
+def test_production_readiness_requires_both_scope_models(model_dir, tmp_path):
+    base = Predictor.from_champion(model_dir)
+
+    def scoped(scope):
+        p = copy.copy(base)
+        p.bundle = copy.copy(base.bundle)
+        p.bundle.metadata = dict(base.bundle.metadata)
+        p.bundle.metadata.update({
+            "scope": scope,
+            "data_source": "production",
+            "evaluation": {**(p.bundle.metadata.get("evaluation") or {}),
+                           "gates": {"passed": True}},
+        })
+        return p
+
+    settings = Settings(_env_file=None, env="production", log_level="ERROR",
+                        sqlite_path=tmp_path / "production.sqlite")
+    app = create_app(settings, None, load_model=False)
+    with TestClient(app) as client:
+        blocked = client.get("/ready")
+        assert blocked.status_code == 503 and blocked.json()["scope"] == "host"
+        app.state.api.set_scope_predictors({
+            "host": scoped("host"),
+            "application": scoped("application"),
+        })
+        assert client.get("/ready").status_code == 200
+        models = client.get("/v1/model").json()["models"]
+        assert set(models) == {"host", "application"}
 
 
 def test_unexpected_domain_error_becomes_clean_500(tmp_path):
