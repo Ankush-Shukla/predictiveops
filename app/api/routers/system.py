@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import httpx
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
@@ -120,10 +122,16 @@ def containers(state: ApiState = Depends(get_state)) -> dict:
                     row = rows.setdefault(name, {
                         "name": name,
                         "service": labels.get("container_label_com_docker_compose_service", "—"),
+                        "cpu_cores": None,
+                        "memory_bytes": None,
+                        "network_rx_bytes_s": None,
+                        "network_tx_bytes_s": None,
                     })
-                    row[metric] = float(sample["value"][1])
+                    value = float(sample["value"][1])
+                    if math.isfinite(value):
+                        row[metric] = value
                     row["timestamp"] = float(sample["value"][0])
-    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
         return {"available": False, "containers": [], "error": str(exc)}
     return {"available": bool(rows), "containers": sorted(rows.values(), key=lambda item: item["name"].lower()), "count": len(rows)}
 
