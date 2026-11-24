@@ -236,7 +236,7 @@ The existing prototype's prior tests and native-process checks do not validate t
 production stack. Docker Compose deployment, Grafana rendering, real host polling, and real
 application instrumentation still require an end-to-end run on the target server.
 
-## Known release blockers
+## Known limitations and release blockers
 
 - Real, reviewed, labelled host and application datasets have not yet been supplied. Production
   readiness deliberately remains HTTP 503 until both models are trained from non-synthetic data
