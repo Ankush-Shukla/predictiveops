@@ -103,8 +103,12 @@ async def containers(state: ApiState = Depends(get_state)) -> dict:
     expressions = {
         "cpu_cores": 'sum by (name) (rate(container_cpu_usage_seconds_total{image!="",name!=""}[5m]))',
         "memory_bytes": 'sum by (name) (container_memory_working_set_bytes{image!="",name!=""})',
-        "network_rx_bytes_s": 'sum by (name) (rate(container_network_receive_bytes_total{image!="",name!=""}[5m]))',
-        "network_tx_bytes_s": 'sum by (name) (rate(container_network_transmit_bytes_total{image!="",name!=""}[5m]))',
+        "network_rx_bytes_s": (
+            'sum by (name) (rate(container_network_receive_bytes_total{image!="",name!=""}[5m]))'
+        ),
+        "network_tx_bytes_s": (
+            'sum by (name) (rate(container_network_transmit_bytes_total{image!="",name!=""}[5m]))'
+        ),
     }
     rows: dict[str, dict] = {}
     try:
@@ -137,7 +141,11 @@ async def containers(state: ApiState = Depends(get_state)) -> dict:
                 row["timestamp"] = float(sample["value"][0])
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
         return {"available": False, "containers": [], "error": str(exc)}
-    return {"available": bool(rows), "containers": sorted(rows.values(), key=lambda item: item["name"].lower()), "count": len(rows)}
+    return {
+        "available": bool(rows),
+        "containers": sorted(rows.values(), key=lambda item: item["name"].lower()),
+        "count": len(rows),
+    }
 
 @router.get("/metrics", tags=["system"], include_in_schema=False)
 def metrics(state: ApiState = Depends(get_state)) -> Response:
