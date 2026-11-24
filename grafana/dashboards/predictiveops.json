@@ -928,7 +928,7 @@
     },
     {
       "id": 16,
-      "title": "Application 5xx rate",
+      "title": "Application 5xx error rate",
       "type": "timeseries",
       "description": "",
       "datasource": {
@@ -1133,7 +1133,7 @@
   },
   "timezone": "browser",
   "title": "PredictiveOps · Infrastructure & Containers",
-  "description": "Host health, one-row-per-container resource inventory, container trends, application SLO signals and model telemetry. Container resource metrics are sourced from cAdvisor.",
+  "description": "Host health, one-row-per-container resource inventory, container trends, application SLO signals and model telemetry. Container resource metrics are sourced from cAdvisor. SYNTHETIC training is not evidence of production performance; model outputs remain not production-validated until real labelled data passes the scope-specific gates.",
   "uid": "predictiveops",
   "version": 5
 }
