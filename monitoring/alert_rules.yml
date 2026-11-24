@@ -26,6 +26,24 @@ groups:
         labels: { severity: critical, scope: host }
         annotations:
           summary: "A host telemetry exporter is unavailable: {{ $labels.job }}"
+      - alert: ApplicationExporterDown
+        expr: up{job="applications"} == 0
+        for: 2m
+        labels: { severity: critical, scope: application }
+        annotations:
+          summary: "Application telemetry target {{ $labels.service }} is unavailable"
+      - alert: ApplicationErrorRateWarning
+        expr: sum by (service) (rate(predictiveops_app_requests_total{status=~"5.."}[5m])) / clamp_min(sum by (service) (rate(predictiveops_app_requests_total[5m])), 1e-9) > 0.02
+        for: 5m
+        labels: { severity: warning, scope: application }
+        annotations:
+          summary: "5xx error rate above 2% for {{ $labels.service }}"
+      - alert: ApplicationLatencyWarning
+        expr: histogram_quantile(0.95, sum by (service, le) (rate(predictiveops_app_request_duration_seconds_bucket[5m]))) > 0.5
+        for: 5m
+        labels: { severity: warning, scope: application }
+        annotations:
+          summary: "Application p95 latency above 500ms for {{ $labels.service }}"
 
   - name: host-safety-net
     rules:
