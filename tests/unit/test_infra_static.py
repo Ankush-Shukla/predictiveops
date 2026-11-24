@@ -100,6 +100,8 @@ def test_grafana_provisioning_consistent():
     assert len({p["id"] for p in dash["panels"]}) == len(dash["panels"])
     assert "SYNTHETIC" in dash["description"] and "not production-validated" in dash["description"]
     assert all("Demo application" not in p["title"] for p in dash["panels"])
+    app_panels = {p["title"] for p in dash["panels"]}
+    assert {"Application p95 latency", "Application 5xx error rate"} <= app_panels
 
 
 def test_workflows_least_privilege_and_no_inline_secrets():
