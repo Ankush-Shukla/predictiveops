@@ -6,6 +6,7 @@ import threading
 import time
 from datetime import UTC, datetime
 
+from app.api.deps import production_model_block_reason
 from app.api.ingestion import ingest_points
 from app.api.state import ApiState
 from app.core.logging import get_logger
@@ -34,6 +35,9 @@ class PrometheusPoller:
             st = self.status[svc]
             st["last_poll"] = datetime.now(UTC).isoformat(timespec="seconds")
             try:
+                reason = production_model_block_reason(self.state)
+                if reason is not None:
+                    raise RuntimeError(reason)
                 predictor = self.state.predictor
                 if predictor is None:
                     raise RuntimeError("no champion model loaded")
