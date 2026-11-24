@@ -45,6 +45,7 @@ class Collectors:
 class ApiState:
     settings: Settings
     predictor: Predictor | None
+    scope_predictors: dict[str, Predictor] = field(default_factory=dict)
     registry: CollectorRegistry = field(default_factory=CollectorRegistry)
     buffers: dict[str, SeriesBuffer] = field(default_factory=dict)
     latest: dict[str, object] = field(default_factory=dict)
@@ -64,6 +65,15 @@ class ApiState:
     def set_predictor(self, predictor: Predictor | None) -> None:
         self.predictor = predictor
         if predictor is not None:
+            scope = str(predictor.bundle.metadata.get("scope", "combined"))
+            self.scope_predictors[scope] = predictor
+            self.collectors.model_info.labels(
+                version=predictor.version,
+                data_source=str(predictor.bundle.metadata.get("data_source", "unknown"))).set(1)
+
+    def set_scope_predictors(self, predictors: dict[str, Predictor]) -> None:
+        self.scope_predictors = dict(predictors)
+        for predictor in self.scope_predictors.values():
             self.collectors.model_info.labels(
                 version=predictor.version,
                 data_source=str(predictor.bundle.metadata.get("data_source", "unknown"))).set(1)
