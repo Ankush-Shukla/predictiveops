@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import math
 
 import httpx
@@ -96,7 +97,7 @@ def sources(request: Request) -> dict:
 
 
 @router.get("/v1/containers", tags=["monitoring"])
-def containers(state: ApiState = Depends(get_state)) -> dict:
+async def containers(state: ApiState = Depends(get_state)) -> dict:
     """Return one live resource snapshot per Docker container from cAdvisor."""
     base_url = state.settings.prometheus_url.rstrip("/")
     expressions = {
@@ -107,30 +108,33 @@ def containers(state: ApiState = Depends(get_state)) -> dict:
     }
     rows: dict[str, dict] = {}
     try:
-        with httpx.Client(base_url=base_url, timeout=3.0) as client:
-            for metric, expression in expressions.items():
-                response = client.get("/api/v1/query", params={"query": expression})
-                response.raise_for_status()
-                payload = response.json()
-                if payload.get("status") != "success":
-                    raise ValueError("Prometheus returned an unsuccessful query")
-                for sample in payload.get("data", {}).get("result", []):
-                    labels = sample.get("metric", {})
-                    name = labels.get("name")
-                    if not name:
-                        continue
-                    row = rows.setdefault(name, {
-                        "name": name,
-                        "service": labels.get("container_label_com_docker_compose_service", "—"),
-                        "cpu_cores": None,
-                        "memory_bytes": None,
-                        "network_rx_bytes_s": None,
-                        "network_tx_bytes_s": None,
-                    })
-                    value = float(sample["value"][1])
-                    if math.isfinite(value):
-                        row[metric] = value
-                    row["timestamp"] = float(sample["value"][0])
+        async with httpx.AsyncClient(base_url=base_url, timeout=3.0) as client:
+            responses = await asyncio.gather(*(
+                client.get("/api/v1/query", params={"query": expression})
+                for expression in expressions.values()
+            ))
+        for (metric, _), response in zip(expressions.items(), responses, strict=True):
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("status") != "success":
+                raise ValueError("Prometheus returned an unsuccessful query")
+            for sample in payload.get("data", {}).get("result", []):
+                labels = sample.get("metric", {})
+                name = labels.get("name")
+                if not name:
+                    continue
+                row = rows.setdefault(name, {
+                    "name": name,
+                    "service": labels.get("container_label_com_docker_compose_service", "—"),
+                    "cpu_cores": None,
+                    "memory_bytes": None,
+                    "network_rx_bytes_s": None,
+                    "network_tx_bytes_s": None,
+                })
+                value = float(sample["value"][1])
+                if math.isfinite(value):
+                    row[metric] = value
+                row["timestamp"] = float(sample["value"][0])
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
         return {"available": False, "containers": [], "error": str(exc)}
     return {"available": bool(rows), "containers": sorted(rows.values(), key=lambda item: item["name"].lower()), "count": len(rows)}
