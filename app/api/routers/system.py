@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from app.api.deps import get_predictor, get_state
+from app.api.deps import get_predictor, get_state, production_model_block_reason
 from app.api.state import ApiState
 from app.models.predictor import Predictor
 
@@ -20,8 +20,14 @@ def health() -> dict:
 @router.get("/ready", tags=["system"])
 def ready(state: ApiState = Depends(get_state)):
     """Readiness: a champion model is loaded and verified."""
-    if state.predictor is None:
-        return JSONResponse(status_code=503, content={"status": "not_ready", "reason": "no champion model"})
+    reason = production_model_block_reason(state)
+    if reason is not None:
+        return JSONResponse(status_code=503, content={
+            "status": "not_ready",
+            "reason": reason,
+            "model_version": state.predictor.version if state.predictor else None,
+            "data_source": state.predictor.bundle.metadata.get("data_source") if state.predictor else None,
+        })
     return {"status": "ready", "model_version": state.predictor.version}
 
 
