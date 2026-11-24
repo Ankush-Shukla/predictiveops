@@ -4,8 +4,9 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from app.api.deps import get_predictor, get_state, production_model_block_reason
+from app.api.deps import get_state, production_model_block_reason
 from app.api.state import ApiState
+from app.core.exceptions import ModelNotReadyError
 from app.models.predictor import Predictor
 
 router = APIRouter()
@@ -68,7 +69,6 @@ def get_predictor_from_state(state: ApiState) -> Predictor:
     p = state.predictor
     reason = production_model_block_reason(state, p)
     if p is None or reason is not None:
-        from app.core.exceptions import ModelNotReadyError
         raise ModelNotReadyError(reason or "model is not ready")
     return p
 
@@ -77,7 +77,7 @@ def get_predictor_from_state(state: ApiState) -> Predictor:
 def sources(request: Request) -> dict:
     """Status of every configured Prometheus ingestion scope."""
     pollers = getattr(request.app.state, "pollers", {})
-    if len(pollers) > 1:
+    if request.app.state.api.settings.env == "production":
         return {"prometheus": {"enabled": True, "scopes": {
             scope: {"step_seconds": poller.step, "services": poller.status}
             for scope, poller in sorted(pollers.items())
