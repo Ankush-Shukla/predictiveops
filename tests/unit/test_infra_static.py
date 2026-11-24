@@ -84,6 +84,8 @@ def test_prometheus_jobs_match_service_names_used_by_default_queries():
     assert SVC["api"]["environment"]["PREDICTIVEOPS_PROMETHEUS_SERVICES"] == "demo-app"
     assert "demo-app:8001" in jobs["demo-app"]["static_configs"][0]["targets"]
     assert "api:8000" in jobs["predictiveops-api"]["static_configs"][0]["targets"]
+    assert jobs["applications"]["file_sd_configs"][0]["files"] == ["/etc/prometheus/targets/*.yml"]
+    assert "./prometheus/targets:/etc/prometheus/targets:ro" in SVC["prometheus"]["volumes"]
     rules = load("monitoring/alert_rules.yml")["groups"][0]["rules"]
     assert {r["alert"] for r in rules} >= {"PredictedFailure", "PolicyAlertLevel"}
 
@@ -139,3 +141,6 @@ def test_static_safety_net_rules_cover_real_host_telemetry():
     assert alerts == {"HostCpuWarning", "HostMemoryWarning", "HostFilesystemWarning", "HostDiskIoWarning"}
     assert all(r["labels"]["source"] == "static-threshold" for r in rules)
     assert all("demo_" not in r["expr"] for r in rules)
+    app_rules = groups["predictiveops"]
+    app_alerts = {r["alert"] for r in app_rules}
+    assert {"ApplicationExporterDown", "ApplicationErrorRateWarning", "ApplicationLatencyWarning"} <= app_alerts
