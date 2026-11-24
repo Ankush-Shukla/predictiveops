@@ -486,80 +486,6 @@
     },
     {
       "id": 9,
-      "title": "Demo application metrics",
-      "type": "timeseries",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 20,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "demo_cpu_pct",
-          "legendFormat": "CPU %",
-          "instant": false
-        },
-        {
-          "refId": "B",
-          "expr": "demo_memory_pct",
-          "legendFormat": "Memory %",
-          "instant": false
-        },
-        {
-          "refId": "C",
-          "expr": "demo_latency_p95_ms",
-          "legendFormat": "p95 latency",
-          "instant": false
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "decimals": 1,
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "fillOpacity": 12,
-            "showPoints": "never",
-            "spanNulls": false,
-            "axisCenteredZero": false,
-            "axisColor": "text",
-            "axisLabel": "",
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 10,
       "title": "PredictiveOps alert events",
       "type": "timeseries",
       "description": "",
@@ -621,7 +547,7 @@
       }
     },
     {
-      "id": 11,
+      "id": 10,
       "title": "API request rate",
       "type": "timeseries",
       "description": "",
@@ -683,7 +609,7 @@
       }
     },
     {
-      "id": 12,
+      "id": 11,
       "title": "Remediation decisions",
       "type": "timeseries",
       "description": "",
@@ -745,7 +671,7 @@
       }
     },
     {
-      "id": 13,
+      "id": 12,
       "title": "Container CPU usage",
       "type": "timeseries",
       "datasource": {
@@ -790,7 +716,7 @@
       }
     },
     {
-      "id": 14,
+      "id": 13,
       "title": "Container memory working set",
       "type": "timeseries",
       "datasource": {
@@ -851,7 +777,7 @@
   "timepicker": {},
   "timezone": "browser",
   "title": "PredictiveOps · Infrastructure",
-  "description": "SIMULATED infrastructure metrics and SYNTHETIC model training data.",
+  "description": "Live host and container telemetry. The bundled model is trained on SYNTHETIC data and is not production-validated.",
   "uid": "predictiveops",
-  "version": 2
+  "version": 3
 }
