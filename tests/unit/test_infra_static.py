@@ -29,8 +29,7 @@ def test_images_are_pinned_and_no_latest():
 
 def test_secrets_are_not_hardcoded_and_required_ones_have_no_default():
     assert ":?" in SVC["grafana"]["environment"]["GRAFANA_ADMIN_PASSWORD".replace("GRAFANA_", "GF_SECURITY_")]
-    for svc, key in (("api", "PREDICTIVEOPS_API_KEY"), ("demo-app", "DEMO_ADMIN_TOKEN")):
-        assert SVC[svc]["environment"][key].endswith(":-}")  # empty (disabled) by default
+    assert SVC["api"]["environment"]["PREDICTIVEOPS_API_KEY"].endswith(":-}")
     excluded_dirs = {".git", ".venv", "venv", ".tox", ".nox", "node_modules"}
     text = "\n".join(
         p.read_text(errors="ignore")
@@ -55,40 +54,38 @@ def test_default_stack_is_safe_by_default():
     assert override["environment"]["PREDICTIVEOPS_DRY_RUN"] == "false"  # only the opt-in file goes live
 
 
-def test_labels_and_targets_line_up_with_safety_checks():
-    assert SVC["demo-app"]["labels"]["predictiveops.managed"] == "true"
-    can = SVC["demo-app-canary"]["labels"]
-    assert can["predictiveops.managed"] == "true" and can["predictiveops.role"] == "canary"
+def test_production_stack_contains_no_demo_or_canary_containers():
+    assert {"demo-app", "demo-app-canary"}.isdisjoint(SVC)
     env = SVC["api"]["environment"]
-    rem = json.loads(env["PREDICTIVEOPS_REMEDIATION_TARGETS"])["demo-app"]
-    can_t = json.loads(env["PREDICTIVEOPS_CANARY_TARGETS"])["demo-app"]
-    assert rem["container"] == SVC["demo-app"]["container_name"] and rem["action"] == "restart_container"
-    assert can_t["container"] == SVC["demo-app-canary"]["container_name"]
-    assert can_t["action"] == "rollback_canary"
-
+    assert json.loads(env["PREDICTIVEOPS_REMEDIATION_TARGETS"]) == {}
+    assert "PREDICTIVEOPS_CANARY_TARGETS" not in env
 
 def test_production_api_does_not_auto_train_or_promote_synthetic_models():
     trainer = SVC["trainer"]
     assert "training" in trainer["profiles"]
     command = " ".join(trainer["command"])
-    assert "/srv/artifacts/data/production.csv.gz" in command
+    assert "/srv/training-data/host.csv.gz" in command
+    assert "/srv/training-data/application.csv.gz" in command
+    assert "--scope host" in command and "--scope application" in command
+    assert "./training-data:/srv/training-data:ro" in trainer["volumes"]
     assert "generate_data.py" not in command
     assert "--promote" in command and "--enforce-gates" in command
     assert "depends_on" not in SVC["api"]
     assert SVC["api"]["environment"]["PREDICTIVEOPS_ENV"] == "production"
 
-def test_prometheus_jobs_match_service_names_used_by_default_queries():
+def test_prometheus_scrapes_host_and_discovered_application_targets():
     prom = load("prometheus/prometheus.yml")
     jobs = {j["job_name"]: j for j in prom["scrape_configs"]}
-    assert jobs["demo-app"]["static_configs"][0]["labels"]["service"] == "demo-app"
-    assert SVC["api"]["environment"]["PREDICTIVEOPS_PROMETHEUS_SERVICES"] == "demo-app"
-    assert "demo-app:8001" in jobs["demo-app"]["static_configs"][0]["targets"]
+    assert {"node-exporter", "cadvisor", "applications", "predictiveops-api"} <= set(jobs)
+    assert not any("demo" in name for name in jobs)
+    env = SVC["api"]["environment"]
+    assert env["PREDICTIVEOPS_PROMETHEUS_HOST_SERIES_ID"].endswith(":-home-server}")
+    assert env["PREDICTIVEOPS_PROMETHEUS_APPLICATION_SERVICES"].endswith(":-}")
     assert "api:8000" in jobs["predictiveops-api"]["static_configs"][0]["targets"]
     assert jobs["applications"]["file_sd_configs"][0]["files"] == ["/etc/prometheus/targets/*.yml"]
     assert "./prometheus/targets:/etc/prometheus/targets:ro" in SVC["prometheus"]["volumes"]
     rules = load("monitoring/alert_rules.yml")["groups"][0]["rules"]
     assert {r["alert"] for r in rules} >= {"PredictedFailure", "PolicyAlertLevel"}
-
 
 def test_grafana_provisioning_consistent():
     ds = load("grafana/provisioning/datasources/prometheus.yml")["datasources"][0]
