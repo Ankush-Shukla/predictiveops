@@ -10,10 +10,11 @@ from app.api.main import create_app
 from app.api.poller import PrometheusPoller
 from app.api.state import ApiState
 from app.core.config import Settings
-from app.core.domain import METRIC_COLUMNS
+from app.core.domain import APPLICATION_METRIC_COLUMNS, HOST_METRIC_COLUMNS, METRIC_COLUMNS
 from app.models.predictor import Predictor
 from app.policies.models import RemediationTarget
-from app.services.prometheus_client import PrometheusClient, PrometheusError
+from app.services.prometheus_client import (APPLICATION_QUERIES, HOST_QUERIES, PrometheusClient,
+                                            PrometheusError, frame_to_points)
 from data.synthetic.generator import GeneratorConfig, generate_dataset
 from training.gates import GateConfig
 from training.train import TrainConfig, run_training
@@ -122,6 +123,26 @@ def test_sample_clock_is_regular_and_stable_across_polls():
 
     shared = set(a["timestamp"]) & set(b["timestamp"])
     assert len(shared) == 15
+
+def test_scope_query_contracts_and_host_point_defaults():
+    host = PrometheusClient("http://p", queries=HOST_QUERIES, required_metrics=HOST_METRIC_COLUMNS)
+    app = PrometheusClient("http://p", queries=APPLICATION_QUERIES,
+                           required_metrics=APPLICATION_METRIC_COLUMNS)
+    assert set(host.metrics) == set(HOST_METRIC_COLUMNS)
+    assert set(app.metrics) == set(APPLICATION_METRIC_COLUMNS)
+    with pytest.raises(ValueError, match="required metrics"):
+        PrometheusClient("http://p", queries=HOST_QUERIES)
+
+    frame = pd.DataFrame([{
+        "timestamp": pd.Timestamp("2026-11-24T00:00:00Z"),
+        **{metric: 1.0 for metric in HOST_METRIC_COLUMNS},
+    }])
+    point = frame_to_points(frame)[0]
+    assert point["cpu_pct"] == 1.0
+    assert point["request_rate_rps"] == 0.0
+    assert point["latency_p95_ms"] == 0.0
+    assert point["error_rate"] == 0.0
+
 
 def test_custom_queries_must_cover_all_metrics():
     with pytest.raises(ValueError):
