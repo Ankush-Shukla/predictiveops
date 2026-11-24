@@ -10,23 +10,22 @@ x-app-env: &app-env
 
 services:
   trainer:
+    profiles: [ "training" ]
     build: { context: ., dockerfile: docker/Dockerfile, target: trainer }
     image: predictiveops-trainer:local
     environment: *app-env
     command:
-      - sh
-      - -c
-      - >-
-        python scripts/generate_data.py --days 14 --series 4 --out /srv/artifacts/data/synthetic.csv.gz &&
-        python scripts/train.py --data /srv/artifacts/data/synthetic.csv.gz --promote --enforce-gates
+      - python
+      - scripts/train.py
+      - --data
+      - /srv/artifacts/data/production.csv.gz
+      - --promote
+      - --enforce-gates
     volumes: [ "artifacts:/srv/artifacts" ]
     restart: "no"
-
   api:
     build: { context: ., dockerfile: docker/Dockerfile, target: runtime }
     image: predictiveops-runtime:local
-    depends_on:
-      trainer: { condition: service_completed_successfully }
     environment:
       <<: *app-env
       PREDICTIVEOPS_ENV: production
