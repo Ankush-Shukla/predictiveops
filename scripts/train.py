@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         "test_ml": slim(r["test"]), "test_baseline_default": slim(r["baseline_default"]),
         "test_baseline_tuned": slim(r["baseline_tuned"]), "event": slim(r["event"]),
         "calibration": r["calibration"], "mlflow": res.mlflow}, indent=2, default=str))
-    print(f"NOTE: evaluation data source: {res.bundle.metadata.get('data_source', 'unknown')}.")
+    print(f"NOTE: evaluation data source: {res.bundle.metadata.get('data_source', 'unknown').upper()}.")
     return 2 if (a.enforce_gates and not r["gates"]["passed"]) else 0
 
 
