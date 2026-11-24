@@ -82,6 +82,14 @@ def test_prometheus_scrapes_host_and_discovered_application_targets():
     assert env["PREDICTIVEOPS_PROMETHEUS_HOST_SERIES_ID"].endswith(":-home-server}")
     assert env["PREDICTIVEOPS_PROMETHEUS_APPLICATION_SERVICES"].endswith(":-}")
     assert "api:8000" in jobs["predictiveops-api"]["static_configs"][0]["targets"]
+    assert jobs["node-exporter"]["static_configs"][0]["targets"] == ["${TAILSCALE_IP}:9100"]
+    assert "--config.expand-env" in SVC["prometheus"]["command"]
+    assert SVC["node-exporter"]["network_mode"] == "host"
+    assert "--path.procfs=/host/proc" in SVC["node-exporter"]["command"]
+    assert "--path.sysfs=/host/sys" in SVC["node-exporter"]["command"]
+    assert any("/proc:/host/proc:ro" in v for v in SVC["node-exporter"]["volumes"])
+    assert any("/sys:/host/sys:ro" in v for v in SVC["node-exporter"]["volumes"])
+    assert "${TAILSCALE_IP:?set TAILSCALE_IP in .env}" in SVC["node-exporter"]["command"][-1]
     assert jobs["applications"]["file_sd_configs"][0]["files"] == ["/etc/prometheus/targets/*.yml"]
     assert "./prometheus/targets:/etc/prometheus/targets:ro" in SVC["prometheus"]["volumes"]
     rules = load("monitoring/alert_rules.yml")["groups"][0]["rules"]
