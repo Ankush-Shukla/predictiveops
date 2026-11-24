@@ -83,8 +83,8 @@ function App() {
   const scopedModels: AnyRecord | null = data.model?.models ?? null;
   const modelCount = scopedModels ? Object.keys(scopedModels).length : 0;
   const primaryModel: AnyRecord | null = scopedModels?.host ?? data.model;
-  const modelVersionLabel = scopedModels
-    ? Object.entries(scopedModels).map(([scope, model]: [string, any]) => scope + ": " + (model.version ?? "missing")).join(" · ")
+  const modelVersionLabel = modelCount
+    ? Object.entries(scopedModels!).map(([scope, model]: [string, any]) => scope + ": " + (model.version ?? "missing")).join(" · ")
     : data.model?.version ? "Version " + data.model.version : "No champion loaded";
   const sourceCount = prometheus?.scopes
     ? Object.values(prometheus.scopes).reduce((n: number, scope: any) => n + Object.keys(scope.services ?? {}).length, 0)
@@ -145,16 +145,16 @@ function App() {
               <div className="panel risk-panel">
                 <PanelTitle title="Service risk snapshot" subtitle="Latest model probability per buffered service" action="PREDICTIONS"/>
                 {chartData.length ? <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData} margin={{top:12,right:8,left:-22,bottom:0}}><defs><linearGradient id="riskFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#4f8cff" stopOpacity={0.32}/><stop offset="100%" stopColor="#4f8cff" stopOpacity={0.02}/></linearGradient></defs><CartesianGrid stroke="#202a39" vertical={false}/><XAxis dataKey="name" tick={{fill:"#8491a4",fontSize:11}} axisLine={false} tickLine={false}/><YAxis domain={[0,100]} tick={{fill:"#8491a4",fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>`${v}%`}/><Tooltip contentStyle={{background:"#111925",border:"1px solid #2a3749",borderRadius:9,color:"#e7edf6"}} formatter={(v)=>[`${v}%`,"Failure probability"]}/><Area type="monotone" dataKey="risk" stroke="#5c96ff" strokeWidth={2.5} fill="url(#riskFill)" connectNulls/></AreaChart></ResponsiveContainer></div> : <EmptyState icon={<Activity/>} title="No scored series yet" text="Once Prometheus polling or metric ingestion supplies enough history, service risk appears here."/>}
-                <div className="chart-foot"><span><i className="legend-dot blue"/>Failure probability</span><span>Model horizon: {data.model?.horizon_minutes ?? "—"} min</span></div>
+                <div className="chart-foot"><span><i className="legend-dot blue"/>Failure probability</span><span>Model horizon: {primaryModel?.horizon_minutes ?? "—"} min</span></div>
               </div>
               <div className="panel model-panel">
-                <PanelTitle title="Model details" subtitle="Active champion metadata"/>
+                <PanelTitle title="Model details" subtitle="Independent host and application model metadata"/>
                 <div className="model-version"><div className="model-icon"><Cpu size={20}/></div><div><b>{primaryModel?.model_type ?? (modelCount ? "Scoped prediction models" : "Model unavailable")}</b><span>{modelVersionLabel}</span></div><span className={isReady ? "status-pill success" : "status-pill warning"}>{isReady ? "READY" : "OFFLINE"}</span></div>
                 <Detail label="Decision threshold" value={primaryModel?.threshold !== undefined ? pretty(primaryModel.threshold) : "—"}/>
                 <Detail label="Required history" value={primaryModel?.required_history_minutes ? `${primaryModel.required_history_minutes} minutes` : "—"}/>
                 <Detail label="Feature count" value={primaryModel?.n_features ?? "—"}/>
                 <Detail label="Training data" value={primaryModel?.data_source ?? "—"}/>
-                <div className="model-note"><ShieldAlert size={15}/><span>{modelCount ? "Host and application predictions use independent feature schemas and model artifacts." : "Model outputs should be interpreted alongside threshold-based alerts and operational telemetry."}</span></div>
+                <div className="model-note"><ShieldAlert size={15}/><span>{modelCount ? "Host and application models are isolated; both must pass production gates before readiness." : "Model outputs should be interpreted alongside threshold-based alerts and operational telemetry."}</span></div>
               </div>
             </section>
             <section className="content-grid lower-grid">
