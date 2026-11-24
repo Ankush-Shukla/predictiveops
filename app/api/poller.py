@@ -26,8 +26,8 @@ class PrometheusPoller:
         self.step, self.interval, self.steps = step_seconds, interval_seconds, lookback_steps
         self.scope, self.predictor = scope, predictor
         self._clock = clock
-        self._sample_origin_ts = self._clock()
-        self._sample_origin_dt = datetime.now(UTC)
+        self._sample_origin_ts = (self._clock() // self.step) * self.step
+        self._sample_origin_dt = datetime.fromtimestamp(self._sample_origin_ts, UTC)
         self.status: dict[str, dict] = {s: {"last_poll": None, "last_ok": None, "error": None,
                                             "samples_ingested": 0} for s in services}
         self._stop = threading.Event()
