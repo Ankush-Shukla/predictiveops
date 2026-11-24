@@ -142,4 +142,7 @@ def test_static_safety_net_rules_cover_real_host_telemetry():
     assert all("demo_" not in r["expr"] for r in rules)
     app_rules = groups["predictiveops"]
     app_alerts = {r["alert"] for r in app_rules}
-    assert {"ApplicationExporterDown", "ApplicationErrorRateWarning", "ApplicationLatencyWarning"} <= app_alerts
+    expected_app_alerts = {
+        "ApplicationExporterDown", "ApplicationErrorRateWarning", "ApplicationLatencyWarning",
+    }
+    assert expected_app_alerts <= app_alerts
