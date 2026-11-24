@@ -91,8 +91,8 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
             poller.stop()
 
     app = FastAPI(title="PredictiveOps API", version="0.8.0", lifespan=lifespan,
-                  description="Predicts the probability of service failure within the next "
-                              "15-30 minutes. Demo data is SYNTHETIC.")
+                  description="Scope-specific host and application failure-risk inference. "
+                              "Production requires independently qualified real-data models.")
     app.state.api = ApiState(settings=settings, predictor=predictor)
     app.state.poller = None
     app.state.pollers = {}
@@ -114,8 +114,9 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
     app.include_router(system.router)
     app.include_router(predict.router)
     app.include_router(policy.router)
-    app.include_router(canary.router)
-    app.include_router(simulate.router)
+    if settings.env != "production":
+        app.include_router(canary.router)
+        app.include_router(simulate.router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", include_in_schema=False)
