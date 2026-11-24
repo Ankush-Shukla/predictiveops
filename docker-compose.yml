@@ -59,6 +59,7 @@ services:
       DEMO_ADMIN_TOKEN: ${DEMO_ADMIN_TOKEN:-}   # fault injection is disabled while empty
     labels:
       predictiveops.managed: "true"             # required for remediation to touch this container
+    ports: [ "127.0.0.1:8001:8001" ]
     healthcheck:
       test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=3)" ]
       interval: 15s
@@ -78,6 +79,7 @@ services:
     labels:
       predictiveops.managed: "true"
       predictiveops.role: canary                # required for rollback_canary
+    ports: [ "127.0.0.1:8002:8002" ]
     restart: unless-stopped
 
   prometheus:
@@ -90,6 +92,7 @@ services:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
       - prometheus-data:/prometheus
+    ports: [ "127.0.0.1:9090:9090" ]
     restart: unless-stopped
 
   cadvisor:
