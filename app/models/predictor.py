@@ -59,7 +59,7 @@ class Predictor:
         """Score the latest sample of ONE series given >= required_history rows of history."""
         if "series_id" in window.columns and window["series_id"].nunique() > 1:
             raise DataValidationError("predict() takes a single series")
-        validate_metrics_frame(window, require_series_id=False)
+        validate_metrics_frame(window, require_series_id=False, metrics=self.metric_columns)
         window = window.sort_values("timestamp").reset_index(drop=True)
         feats = self._builder.transform_last(window)
         p = float(self.predict_proba_frame(feats).iloc[0])
