@@ -94,8 +94,17 @@ function App() {
     return Number.isFinite(ageMs) && ageMs <= 180000;
   }).length;
   const sourceCount = sourceTargets.length || Object.keys(prometheus?.services ?? {}).length;
+  const requiredSourceScopesReady = ["host", "application"].every(scope => {
+    const configured = sourceScopes.find(([name]) => name === scope)?.[1];
+    const targets = Object.values(configured?.services ?? {}) as AnyRecord[];
+    return targets.length > 0 && targets.every(target => {
+      if (target.error || !target.last_ok) return false;
+      const ageMs = Date.now() - new Date(target.last_ok).getTime();
+      return Number.isFinite(ageMs) && ageMs <= 180000;
+    });
+  });
   const sourceHealth = !prometheus?.enabled ? "Disabled"
-    : sourceTargets.length > 0 && healthyTargets === sourceTargets.length ? "Healthy" : "Degraded";
+    : requiredSourceScopesReady && healthyTargets === sourceTargets.length ? "Healthy" : "Degraded";
   const hostModel = scopedModels?.host;
   const applicationModel = scopedModels?.application;
   const serviceCount = data.series.length;
