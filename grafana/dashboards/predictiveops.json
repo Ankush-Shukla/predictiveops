@@ -520,6 +520,13 @@
           "decimals": 1,
           "color": {
             "mode": "palette-classic"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": true
           }
         },
         "overrides": []
@@ -530,7 +537,30 @@
         "footer": {
           "show": false
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "name",
+            "mode": "outerTabular"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "CPU cores",
+              "Value #B": "Memory working set",
+              "Value #C": "Network RX",
+              "Value #D": "Network TX"
+            }
+          }
+        }
+      ]
     },
     {
       "id": 10,
