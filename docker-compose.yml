@@ -103,9 +103,8 @@ services:
 
   mlflow:
     profiles: [ "mlflow" ]
+    build: { context: ., dockerfile: docker/Dockerfile, target: trainer }
     image: predictiveops-trainer:local
-    depends_on:
-      trainer: { condition: service_completed_successfully }
     command: [ "mlflow", "ui", "--host", "0.0.0.0", "--port", "5000", "--backend-store-uri", "sqlite:////srv/artifacts/mlflow.db" ]
     volumes: [ "artifacts:/srv/artifacts" ]
     ports: [ "127.0.0.1:5000:5000" ]
