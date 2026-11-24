@@ -23,6 +23,19 @@ METRIC_COLUMNS: tuple[str, ...] = (
     "error_rate",
 )
 
+# Scope-specific feature contracts. These are intentionally disjoint: host prediction must not
+# depend on application request metrics, while application prediction includes both resource
+# and request/latency/error signals.
+HOST_METRIC_COLUMNS: tuple[str, ...] = (
+    "cpu_pct", "memory_pct", "disk_io_util_pct", "network_rx_mbps", "network_tx_mbps",
+)
+APPLICATION_METRIC_COLUMNS: tuple[str, ...] = METRIC_COLUMNS
+SCOPE_METRIC_COLUMNS: dict[str, tuple[str, ...]] = {
+    "combined": METRIC_COLUMNS,
+    "host": HOST_METRIC_COLUMNS,
+    "application": APPLICATION_METRIC_COLUMNS,
+}
+
 # Valid (min, max) per metric, used for validation.
 METRIC_BOUNDS: dict[str, tuple[float, float]] = {
     "cpu_pct": (0.0, 100.0),
