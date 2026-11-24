@@ -120,6 +120,7 @@ function App() {
           </div>
 
           {data.errors.length > 0 && <div className="notice warning"><AlertTriangle size={16}/><div><b>Some API endpoints could not be loaded</b><span>{data.errors.join(" · ")}</span></div></div>}
+          {!isReady && data.ready?.reason && <div className="notice warning"><ShieldAlert size={16}/><div><b>Production inference is blocked</b><span>{data.ready.reason}. The API will not publish predictions from an unqualified model.</span></div></div>}
 
           {page === "Overview" && <>
             <section className="stat-grid">
