@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, Bell, CheckCircle2,
   ChevronRight, CircleHelp, Clock3, Cpu, ExternalLink, Gauge, LayoutDashboard,
-  RefreshCw, Server, ShieldCheck, ShieldAlert, Workflow, Zap,
+  RefreshCw, Server, ShieldCheck, ShieldAlert, Zap,
 } from "lucide-react";
 import {
   Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -12,10 +12,10 @@ type AnyRecord = Record<string, any>;
 type Snapshot = {
   health: AnyRecord | null; ready: AnyRecord | null; model: AnyRecord | null;
   sources: AnyRecord | null; series: AnyRecord[]; alerts: AnyRecord[];
-  audit: AnyRecord[]; policy: AnyRecord | null; canary: AnyRecord[];
+  audit: AnyRecord[]; policy: AnyRecord | null;
   errors: string[];
 };
-const empty: Snapshot = { health:null, ready:null, model:null, sources:null, series:[], alerts:[], audit:[], policy:null, canary:[], errors:[] };
+const empty: Snapshot = { health:null, ready:null, model:null, sources:null, series:[], alerts:[], audit:[], policy:null, errors:[] };
 const get = async (path: string) => {
   const response = await fetch(path, { headers: { Accept: "application/json" } });
   if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
@@ -50,7 +50,7 @@ function App() {
     const endpoints = [
       ["health", "/health"], ["ready", "/ready"], ["model", "/v1/model"],
       ["sources", "/v1/sources"], ["series", "/v1/series"], ["alerts", "/v1/alerts?limit=50"],
-      ["audit", "/v1/audit?limit=50"], ["policy", "/v1/policy"], ["canary", "/v1/canary?limit=20"],
+      ["audit", "/v1/audit?limit=50"], ["policy", "/v1/policy"],
     ] as const;
     const results = await Promise.all(endpoints.map(async ([key, path]) => {
       try { return [key, await get(path), null] as const; }
@@ -76,6 +76,15 @@ function App() {
 
   const prometheus = data.sources?.prometheus;
   const isReady = data.ready?.status === "ready";
+  const scopedModels: AnyRecord | null = data.model?.models ?? null;
+  const modelCount = scopedModels ? Object.keys(scopedModels).length : 0;
+  const primaryModel: AnyRecord | null = scopedModels?.host ?? data.model;
+  const modelVersionLabel = scopedModels
+    ? Object.entries(scopedModels).map(([scope, model]: [string, any]) => scope + ": " + (model.version ?? "missing")).join(" · ")
+    : data.model?.version ? "Version " + data.model.version : "No champion loaded";
+  const sourceCount = prometheus?.scopes
+    ? Object.values(prometheus.scopes).reduce((n: number, scope: any) => n + Object.keys(scope.services ?? {}).length, 0)
+    : Object.keys(prometheus?.services ?? {}).length;
   const serviceCount = data.series.length;
   const alertCount = data.alerts.length;
   const remediation = data.policy?.config ?? {};
@@ -95,7 +104,6 @@ function App() {
           <button className={page === "Overview" ? "nav-item active" : "nav-item"} onClick={() => activePage("Overview")}><LayoutDashboard size={17}/>Overview</button>
           <button className={page === "Predictions" ? "nav-item active" : "nav-item"} onClick={() => activePage("Predictions")}><Gauge size={17}/>Predictions<span className="nav-count">{serviceCount}</span></button>
           <button className={page === "Alerts & audit" ? "nav-item active" : "nav-item"} onClick={() => activePage("Alerts & audit")}><Bell size={17}/>Alerts & audit<span className="nav-count">{alertCount}</span></button>
-          <button className={page === "Canary" ? "nav-item active" : "nav-item"} onClick={() => activePage("Canary")}><Workflow size={17}/>Canary releases</button>
         </nav>
         <div className="nav-label monitoring-label">MONITORING</div>
         <a className="nav-item link-item" href={`http://${window.location.hostname}:3000`} target="_blank" rel="noreferrer"><Activity size={17}/>Grafana <ExternalLink size={13}/></a>
@@ -115,7 +123,7 @@ function App() {
 
         <div className="page-content">
           <div className="page-heading">
-            <div><div className="eyebrow">SYSTEM OVERVIEW <span className="eyebrow-line"/></div><h1>{page}</h1><p>{page === "Overview" ? "Predictive service health, model readiness and operational signals." : page === "Predictions" ? "Current model assessments for monitored service series." : page === "Alerts & audit" ? "Alert history and gated remediation decisions." : "Deployment validation history and candidate release decisions."}</p></div>
+            <div><div className="eyebrow">SYSTEM OVERVIEW <span className="eyebrow-line"/></div><h1>{page}</h1><p>{page === "Overview" ? "Predictive service health, model readiness and operational signals." : page === "Predictions" ? "Current model assessments for monitored service series." : page === "Alerts & audit" ? "Alert history and gated remediation decisions." : "Alert history and gated remediation decisions."}</p></div>
             <div className="updated"><Clock3 size={14}/><span>{lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString()}` : "Waiting for data"}</span></div>
           </div>
 
@@ -124,10 +132,10 @@ function App() {
 
           {page === "Overview" && <>
             <section className="stat-grid">
-              <StatCard icon={<ShieldCheck/>} label="MODEL STATUS" value={isReady ? "Ready" : "Not ready"} detail={data.model?.version ? `Version ${data.model.version}` : "Champion model unavailable"} tone={isReady ? "green" : "amber"} />
+              <StatCard icon={<ShieldCheck/>} label="MODEL STATUS" value={isReady ? "Ready" : "Not ready"} detail={data.model?.version ? `Version ${data.model.version}` : modelCount ? modelCount + " independent prediction scopes" : "Champion model unavailable"} tone={isReady ? "green" : "amber"} />
               <StatCard icon={<Server/>} label="MONITORED SERIES" value={String(serviceCount)} detail="Active in-memory series" tone="blue"/>
               <StatCard icon={<Bell/>} label="RECENT ALERTS" value={String(alertCount)} detail="Latest 50 records" tone={alertCount ? "amber" : "green"}/>
-              <StatCard icon={<Zap/>} label="PROMETHEUS" value={prometheus?.enabled ? "Connected" : "Disabled"} detail={prometheus?.enabled ? `${(prometheus.services ?? []).length} configured target(s)` : "Polling is not enabled"} tone={prometheus?.enabled ? "green" : "amber"}/>
+              <StatCard icon={<Zap/>} label="PROMETHEUS" value={prometheus?.enabled ? "Connected" : "Disabled"} detail={prometheus?.enabled ? `${sourceCount} configured target(s)` : "Polling is not enabled"} tone={prometheus?.enabled ? "green" : "amber"}/>
             </section>
             <section className="content-grid">
               <div className="panel risk-panel">
@@ -137,12 +145,12 @@ function App() {
               </div>
               <div className="panel model-panel">
                 <PanelTitle title="Model details" subtitle="Active champion metadata"/>
-                <div className="model-version"><div className="model-icon"><Cpu size={20}/></div><div><b>{data.model?.model_type ?? "Model unavailable"}</b><span>{data.model?.version ?? "No champion loaded"}</span></div><span className={isReady ? "status-pill success" : "status-pill warning"}>{isReady ? "READY" : "OFFLINE"}</span></div>
-                <Detail label="Decision threshold" value={data.model?.threshold !== undefined ? pretty(data.model.threshold) : "—"}/>
-                <Detail label="Required history" value={data.model?.required_history_minutes ? `${data.model.required_history_minutes} minutes` : "—"}/>
-                <Detail label="Feature count" value={data.model?.n_features ?? "—"}/>
-                <Detail label="Training data" value={data.model?.data_source ?? "—"}/>
-                <div className="model-note"><ShieldAlert size={15}/><span>Model outputs should be interpreted alongside threshold-based alerts and operational telemetry.</span></div>
+                <div className="model-version"><div className="model-icon"><Cpu size={20}/></div><div><b>{primaryModel?.model_type ?? (modelCount ? "Scoped prediction models" : "Model unavailable")}</b><span>{modelVersionLabel}</span></div><span className={isReady ? "status-pill success" : "status-pill warning"}>{isReady ? "READY" : "OFFLINE"}</span></div>
+                <Detail label="Decision threshold" value={primaryModel?.threshold !== undefined ? pretty(primaryModel.threshold) : "—"}/>
+                <Detail label="Required history" value={primaryModel?.required_history_minutes ? `${primaryModel.required_history_minutes} minutes` : "—"}/>
+                <Detail label="Feature count" value={primaryModel?.n_features ?? "—"}/>
+                <Detail label="Training data" value={primaryModel?.data_source ?? "—"}/>
+                <div className="model-note"><ShieldAlert size={15}/><span>{modelCount ? "Host and application predictions use independent feature schemas and model artifacts." : "Model outputs should be interpreted alongside threshold-based alerts and operational telemetry."}</span></div>
               </div>
             </section>
             <section className="content-grid lower-grid">
@@ -161,7 +169,6 @@ function App() {
 
           {page === "Predictions" && <section className="panel full-panel"><PanelTitle title="Prediction results" subtitle="Live series state returned by the model API"/><SeriesTable rows={data.series} expanded/></section>}
           {page === "Alerts & audit" && <section className="content-grid stacked-panels"><div className="panel"><PanelTitle title="Recent alerts" subtitle="Policy-generated service alerts"/><RecordTable rows={data.alerts} empty="No alert records returned."/></div><div className="panel"><PanelTitle title="Remediation audit" subtitle="Executed, dry-run, blocked and skipped decisions"/><RecordTable rows={data.audit} empty="No remediation decisions recorded."/></div></section>}
-          {page === "Canary" && <section className="panel full-panel"><PanelTitle title="Canary evaluations" subtitle="Recent baseline-versus-candidate deployment decisions"/><RecordTable rows={data.canary} empty="No canary evaluations yet."/></section>}
 
           <footer className="footer"><span>PredictiveOps <b>·</b> Reliability intelligence</span><span>Refresh interval 10s <b>·</b> {loading ? "Connecting…" : "API snapshot loaded"}</span></footer>
         </div>
