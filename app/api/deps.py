@@ -7,6 +7,7 @@ import hmac
 from fastapi import Header, HTTPException, Request
 
 from app.api.state import ApiState
+from app.core.domain import SCOPE_METRIC_COLUMNS
 from app.core.exceptions import ModelNotReadyError
 from app.models.predictor import Predictor
 
@@ -20,8 +21,12 @@ def production_model_block_reason(state: ApiState, predictor: Predictor | None =
     if state.settings.env != "production":
         return None
     metadata = predictor.bundle.metadata
-    if expected_scope is not None and metadata.get("scope") != expected_scope:
-        return f"loaded model scope does not match required {expected_scope!r} scope"
+    if expected_scope is not None:
+        if metadata.get("scope") != expected_scope:
+            return f"loaded model scope does not match required {expected_scope!r} scope"
+        expected_metrics = SCOPE_METRIC_COLUMNS.get(expected_scope)
+        if expected_metrics is None or tuple(predictor.metric_columns) != expected_metrics:
+            return f"model feature schema does not match required {expected_scope!r} scope"
     source = str(metadata.get("data_source", "unknown")).lower().split("+")
     if "synthetic" in source or "unknown" in source:
         return "model was not trained exclusively on identified production data"
