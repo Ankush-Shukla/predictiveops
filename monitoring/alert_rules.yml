@@ -1,15 +1,16 @@
-# Visible in the Prometheus UI (no Alertmanager in this prototype). Durations assume the accelerated demo.
+# Production telemetry alerts. Durations are based on real scrape time.
 groups:
   - name: predictiveops
     rules:
       - alert: PredictedFailure
         expr: predictiveops_predicted_failure == 1
-        for: 15s
+        for: 1m
         labels: { severity: warning }
         annotations:
           summary: "Model predicts failure for {{ $labels.series_id }}"
       - alert: PolicyAlertLevel
         expr: predictiveops_policy_level >= 2
+        for: 1m
         labels: { severity: critical }
         annotations:
           summary: "Sustained failure risk for {{ $labels.series_id }} (policy level {{ $value }})"
@@ -19,40 +20,36 @@ groups:
         labels: { severity: critical }
         annotations:
           summary: "PredictiveOps API reports no loaded model"
-      - alert: DemoAppDown
-        expr: up{job="demo-app"} == 0
-        for: 30s
-        labels: { severity: critical }
+      - alert: PredictiveOpsSourceMissing
+        expr: up{job=~"node-exporter|cadvisor"} == 0
+        for: 2m
+        labels: { severity: critical, scope: host }
         annotations:
-          summary: "demo-app is not being scraped"
+          summary: "A host telemetry exporter is unavailable: {{ $labels.job }}"
 
-  # Static-threshold SAFETY NET. The model only recognises fault mechanisms it was trained on (see
-  # docs/evaluation.md: held-out mechanisms were mostly missed), whereas plain warning thresholds still
-  # fire for them. Thresholds mirror training/baseline.py (a test keeps them in sync).
-  - name: static-safety-net
+  - name: host-safety-net
     rules:
-      - alert: StaticCpuWarning
-        expr: demo_cpu_pct > 80
-        for: 15s
-        labels: { severity: warning, source: static-threshold }
-        annotations: { summary: "CPU above 80 % on {{ $labels.service }}" }
-      - alert: StaticMemoryWarning
-        expr: demo_memory_pct > 85
-        for: 15s
-        labels: { severity: warning, source: static-threshold }
-        annotations: { summary: "Memory above 85 % on {{ $labels.service }}" }
-      - alert: StaticDiskIoWarning
-        expr: demo_disk_io_util_pct > 85
-        for: 15s
-        labels: { severity: warning, source: static-threshold }
-        annotations: { summary: "Disk I/O above 85 % on {{ $labels.service }}" }
-      - alert: StaticLatencyWarning
-        expr: demo_latency_p95_ms > 500
-        for: 15s
-        labels: { severity: warning, source: static-threshold }
-        annotations: { summary: "p95 latency above 500 ms on {{ $labels.service }}" }
-      - alert: StaticErrorRateWarning
-        expr: demo_error_rate > 0.02
-        for: 15s
-        labels: { severity: warning, source: static-threshold }
-        annotations: { summary: "Error rate above 2 % on {{ $labels.service }}" }
+      - alert: HostCpuWarning
+        expr: 100 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100 > 80
+        for: 5m
+        labels: { severity: warning, source: static-threshold, scope: host }
+        annotations:
+          summary: "Host CPU utilization above 80% on {{ $labels.instance }}"
+      - alert: HostMemoryWarning
+        expr: 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 85
+        for: 5m
+        labels: { severity: warning, source: static-threshold, scope: host }
+        annotations:
+          summary: "Host memory utilization above 85% on {{ $labels.instance }}"
+      - alert: HostFilesystemWarning
+        expr: 100 * (1 - node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"}) > 85
+        for: 5m
+        labels: { severity: warning, source: static-threshold, scope: host }
+        annotations:
+          summary: "Root filesystem usage above 85% on {{ $labels.instance }}"
+      - alert: HostDiskIoWarning
+        expr: max by (instance, device) (rate(node_disk_io_time_seconds_total[5m])) * 100 > 85
+        for: 5m
+        labels: { severity: warning, source: static-threshold, scope: host }
+        annotations:
+          summary: "Disk utilization above 85% on {{ $labels.instance }} / {{ $labels.device }}"
