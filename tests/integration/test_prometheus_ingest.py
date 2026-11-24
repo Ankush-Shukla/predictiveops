@@ -13,8 +13,13 @@ from app.core.config import Settings
 from app.core.domain import APPLICATION_METRIC_COLUMNS, HOST_METRIC_COLUMNS, METRIC_COLUMNS
 from app.models.predictor import Predictor
 from app.policies.models import RemediationTarget
-from app.services.prometheus_client import (APPLICATION_QUERIES, HOST_QUERIES, PrometheusClient,
-                                            PrometheusError, frame_to_points)
+from app.services.prometheus_client import (
+    APPLICATION_QUERIES,
+    HOST_QUERIES,
+    PrometheusClient,
+    PrometheusError,
+    frame_to_points,
+)
 from data.synthetic.generator import GeneratorConfig, generate_dataset
 from training.gates import GateConfig
 from training.train import TrainConfig, run_training
