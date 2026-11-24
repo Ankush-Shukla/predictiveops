@@ -23,8 +23,8 @@ HOST_QUERIES: dict[str, str] = {
     "memory_pct": '100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)',
     "disk_io_util_pct": '100 * max(rate(node_disk_io_time_seconds_total[5m]))',
     "network_rx_mbps": (
-        'sum(rate(node_network_receive_bytes_total{device!~"lo|veth.*|docker.*|br-.*|tailscale.*|tun.*|wg.*"}[5m])) '
-        '* 8 / 1e6'
+        'sum(rate(node_network_receive_bytes_total{'
+        'device!~"lo|veth.*|docker.*|br-.*|tailscale.*|tun.*|wg.*"}[5m])) * 8 / 1e6'
     ),
     "network_tx_mbps": (
         'sum(rate(node_network_transmit_bytes_total{device!~"lo|veth.*|docker.*|br-.*"}[5m])) '
