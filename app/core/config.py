@@ -10,13 +10,14 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.policies.models import PolicyConfig, RemediationTarget
+from app.services.canary_models import CanaryConfig
 
 
 class Settings(BaseSettings):
     """Application settings, read from PREDICTIVEOPS_* environment variables / .env."""
 
     model_config = SettingsConfigDict(
-        env_prefix="PREDICTIVEOPS_", env_file=".env", extra="ignore"
+        env_prefix="PREDICTIVEOPS_", env_file=".env", extra="ignore", env_ignore_empty=True
     )
 
     env: Literal["development", "test", "production"] = "development"
@@ -26,6 +27,11 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data/generated")
     sqlite_path: Path = Path("data/generated/predictiveops.sqlite")
     prometheus_url: str = "http://localhost:9090"
+    prometheus_enabled: bool = False  # poll Prometheus for live series
+    prometheus_services: str = ""  # comma-separated `service` label values, e.g. "demo-app"
+    prometheus_step_seconds: float = Field(default=60.0, ge=1, le=3600)  # one model "minute" per step
+    prometheus_poll_seconds: float = Field(default=10.0, ge=1, le=3600)
+    prometheus_lookback_steps: int = Field(default=90, ge=30, le=1440)
     mlflow_tracking_uri: str = "sqlite:///artifacts/mlflow.db"
     mlflow_experiment: str = "predictiveops"
     mlflow_model_name: str = "predictiveops-failure-model"
@@ -49,10 +55,16 @@ class Settings(BaseSettings):
     policy_remediate_threshold: float = Field(default=0.80, ge=0, le=1)
     remediation_enabled: bool = False
     remediation_targets: dict[str, RemediationTarget] = Field(default_factory=dict)  # JSON in env
+    canary: CanaryConfig = Field(default_factory=CanaryConfig)  # JSON in env
+    canary_targets: dict[str, RemediationTarget] = Field(default_factory=dict)  # service -> canary container
     dry_run: bool = True
     remediation_cooldown_seconds: int = Field(default=900, ge=0)
     max_actions_per_hour: int = Field(default=4, ge=0)
 
+
+    @property
+    def prometheus_service_list(self) -> list[str]:
+        return [x.strip() for x in self.prometheus_services.split(",") if x.strip()]
 
     def policy_config(self) -> PolicyConfig:
         return PolicyConfig(

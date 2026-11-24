@@ -1,0 +1,14 @@
+# OPT-IN override that lets the API restart labelled containers for real:
+#   DOCKER_GID=$(getent group docker | cut -d: -f3) \
+#   docker compose -f docker-compose.yml -f docker-compose.remediation.yml up -d
+# SECURITY: access to the Docker socket is effectively root on the host. The API only issues allowlisted
+# restart/stop calls on containers labelled predictiveops.managed=true, but a compromise of the API
+# container would still expose the socket. Keep DRY_RUN=true unless you accept that risk.
+services:
+  api:
+    group_add: [ "${DOCKER_GID:?set DOCKER_GID to the host docker group id}" ]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      PREDICTIVEOPS_REMEDIATION_ENABLED: "true"
+      PREDICTIVEOPS_DRY_RUN: "false"

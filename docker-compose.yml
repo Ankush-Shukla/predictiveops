@@ -1,0 +1,125 @@
+# PredictiveOps demo stack. Written and statically validated; see PROJECT_STATUS.md for what was executed.
+# Required: GRAFANA_ADMIN_PASSWORD (no default on purpose). Optional: PREDICTIVEOPS_API_KEY, DEMO_ADMIN_TOKEN.
+name: predictiveops
+
+x-app-env: &app-env
+  PREDICTIVEOPS_MODEL_DIR: /srv/artifacts/models
+  PREDICTIVEOPS_SQLITE_PATH: /srv/artifacts/predictiveops.sqlite
+  PREDICTIVEOPS_MLFLOW_TRACKING_URI: sqlite:////srv/artifacts/mlflow.db
+  PREDICTIVEOPS_DATA_DIR: /srv/artifacts/data
+
+services:
+  trainer:
+    build: { context: ., dockerfile: docker/Dockerfile, target: trainer }
+    image: predictiveops-trainer:local
+    environment: *app-env
+    command:
+      - sh
+      - -c
+      - >-
+        python scripts/generate_data.py --days 14 --series 4 --out /srv/artifacts/data/synthetic.csv.gz &&
+        python scripts/train.py --data /srv/artifacts/data/synthetic.csv.gz --promote --enforce-gates
+    volumes: [ "artifacts:/srv/artifacts" ]
+    restart: "no"
+
+  api:
+    build: { context: ., dockerfile: docker/Dockerfile, target: runtime }
+    image: predictiveops-runtime:local
+    depends_on:
+      trainer: { condition: service_completed_successfully }
+    environment:
+      <<: *app-env
+      PREDICTIVEOPS_PROMETHEUS_ENABLED: "true"
+      PREDICTIVEOPS_PROMETHEUS_URL: http://prometheus:9090
+      PREDICTIVEOPS_PROMETHEUS_SERVICES: demo-app
+      PREDICTIVEOPS_PROMETHEUS_STEP_SECONDS: "5"   # one 5 s scrape step = one model "minute" (accelerated demo)
+      PREDICTIVEOPS_PROMETHEUS_POLL_SECONDS: "5"
+      PREDICTIVEOPS_API_KEY: ${PREDICTIVEOPS_API_KEY:-}
+      PREDICTIVEOPS_REMEDIATION_ENABLED: ${PREDICTIVEOPS_REMEDIATION_ENABLED:-false}
+      PREDICTIVEOPS_DRY_RUN: ${PREDICTIVEOPS_DRY_RUN:-true}
+      PREDICTIVEOPS_REMEDIATION_TARGETS: '{"demo-app":{"container":"predictiveops-demo-app","action":"restart_container"}}'
+      PREDICTIVEOPS_CANARY_TARGETS: '{"demo-app":{"container":"predictiveops-demo-app-canary","action":"rollback_canary"}}'
+    volumes: [ "artifacts:/srv/artifacts" ]
+    ports: [ "8000:8000" ]
+    restart: unless-stopped
+
+  demo-app:
+    image: predictiveops-runtime:local
+    build: { context: ., dockerfile: docker/Dockerfile, target: runtime }
+    container_name: predictiveops-demo-app
+    command: [ "uvicorn", "demo_app.main:app_factory", "--factory", "--host", "0.0.0.0", "--port", "8001" ]
+    environment:
+      DEMO_SIM_MINUTE_SECONDS: "5"
+      DEMO_ADMIN_TOKEN: ${DEMO_ADMIN_TOKEN:-}   # fault injection is disabled while empty
+    labels:
+      predictiveops.managed: "true"             # required for remediation to touch this container
+    ports: [ "8001:8001" ]
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=3)" ]
+      interval: 15s
+      timeout: 4s
+      retries: 5
+    restart: unless-stopped
+
+  demo-app-canary:
+    profiles: [ "canary" ]
+    image: predictiveops-runtime:local
+    container_name: predictiveops-demo-app-canary
+    command: [ "uvicorn", "demo_app.main:app_factory", "--factory", "--host", "0.0.0.0", "--port", "8002" ]
+    environment:
+      DEMO_SIM_MINUTE_SECONDS: "5"
+      DEMO_SEED: "7"
+      DEMO_ADMIN_TOKEN: ${DEMO_ADMIN_TOKEN:-}
+    labels:
+      predictiveops.managed: "true"
+      predictiveops.role: canary                # required for rollback_canary
+    ports: [ "8002:8002" ]
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=2d
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus-data:/prometheus
+    ports: [ "9090:9090" ]
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    command: [ "--path.rootfs=/host" ]
+    pid: host
+    volumes: [ "/:/host:ro,rslave" ]            # Linux hosts; on Docker Desktop this shows the VM, not your machine
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    depends_on: [ prometheus ]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports: [ "3000:3000" ]
+    restart: unless-stopped
+
+  mlflow:
+    profiles: [ "mlflow" ]
+    image: predictiveops-trainer:local
+    depends_on:
+      trainer: { condition: service_completed_successfully }
+    command: [ "mlflow", "ui", "--host", "0.0.0.0", "--port", "5000", "--backend-store-uri", "sqlite:////srv/artifacts/mlflow.db" ]
+    volumes: [ "artifacts:/srv/artifacts" ]
+    ports: [ "5000:5000" ]
+
+volumes:
+  artifacts:
+  prometheus-data:
+  grafana-data:

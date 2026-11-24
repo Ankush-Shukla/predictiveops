@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from app.core.logging import get_logger
 from app.policies.actions import ALLOWED_ACTIONS, ActionExecutor, NoopExecutor
 from app.policies.audit import AuditStore
-from app.policies.models import LEVEL_RANK, Level, PolicyConfig, PolicyDecision
+from app.policies.models import LEVEL_RANK, Level, PolicyConfig, PolicyDecision, RemediationTarget
 
 log = get_logger(__name__)
 
@@ -91,32 +91,49 @@ class PolicyEngine:
         target = cfg.targets.get(dec.series_id)
         action = target.action if target else None
         container = target.container if target else None
-        outcome, reason = self._gate(target, now)
-
-        if outcome is None:  # all gates passed
-            if cfg.dry_run:
-                outcome, reason = "dry_run", "dry-run: action NOT executed"
-            else:
-                try:
-                    detail = self.executor.execute(action, container)  # type: ignore[arg-type]
-                    outcome, reason = "executed", detail
-                except Exception as exc:  # never let remediation errors break scoring
-                    outcome, reason = "failed", f"{type(exc).__name__}: {exc}"
-                    log.error("remediation failed", extra={"series_id": dec.series_id, "error": reason})
-
+        outcome, reason = self._gate_and_execute(target, now, dec.series_id)
         dec.action, dec.target, dec.action_outcome = action, container, outcome  # type: ignore[assignment]
         dec.reasons.append(f"remediation {outcome}: {reason}")
         key = (action, container, outcome)
         if key != st.last_audit_key:  # one audit row per distinct outcome while condition persists
             st.last_audit_key = key
-            self.store.add_audit(ts=now, series_id=dec.series_id, action=action or "none", target=container,
-                                 outcome=outcome, dry_run=cfg.dry_run, probability=dec.probability,
-                                 model_version=model_version, reason=reason,
-                                 details={"consecutive_above": dec.consecutive_above})
+            self._audit(dec.series_id, action, container, outcome, reason, now, dec.probability,
+                        model_version, {"consecutive_above": dec.consecutive_above})
         if outcome in ("executed", "dry_run"):  # require fresh evidence after an action
             st.above = st.above_rem = 0
             st.level = "none"
             st.last_audit_key = None
+
+    def request_action(self, *, series_id: str, target: RemediationTarget | None, as_of: datetime,
+                       probability: float | None, model_version: str | None, reason: str,
+                       details: dict | None = None) -> tuple[str, str]:
+        """Run an action requested by another component (e.g. canary rollback) through the SAME
+        gates and audit trail as automatic remediation. Always audited. Returns (outcome, reason)."""
+        outcome, detail = self._gate_and_execute(target, as_of, series_id)
+        self._audit(series_id, target.action if target else None, target.container if target else None,
+                    outcome, f"{reason}; {detail}", as_of, probability, model_version, details)
+        return outcome, detail
+
+    def _audit(self, series_id, action, container, outcome, reason, ts, probability, model_version,
+               details) -> None:
+        self.store.add_audit(ts=ts, series_id=series_id, action=action or "none", target=container,
+                             outcome=outcome, dry_run=self.config.dry_run, probability=probability,
+                             model_version=model_version, reason=reason, details=details)
+
+    def _gate_and_execute(self, target: RemediationTarget | None, now: datetime,
+                          series_id: str) -> tuple[str, str]:
+        cfg = self.config
+        blocked = self._gate(target, now)
+        if blocked[0] is not None:
+            return blocked[0], blocked[1]
+        if cfg.dry_run:
+            return "dry_run", "dry-run: action NOT executed"
+        try:
+            return "executed", self.executor.execute(target.action, target.container)  # type: ignore[union-attr]
+        except Exception as exc:  # never let remediation errors break scoring
+            msg = f"{type(exc).__name__}: {exc}"
+            log.error("remediation failed", extra={"series_id": series_id, "error": msg})
+            return "failed", msg
 
     def _gate(self, target, now: datetime) -> tuple[str | None, str]:
         cfg = self.config

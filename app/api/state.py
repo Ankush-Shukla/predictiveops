@@ -35,6 +35,8 @@ class Collectors:
         self.alerts = Counter("predictiveops_alerts_total", "Alerts raised", ["level"], registry=registry)
         self.actions = Counter("predictiveops_remediation_decisions_total",
                                "Remediation decisions by outcome", ["outcome"], registry=registry)
+        self.canary = Counter("predictiveops_canary_evaluations_total", "Canary evaluations",
+                              ["decision"], registry=registry)
         self.model_info = Gauge("predictiveops_model_info", "Loaded model", ["version", "data_source"],
                                 registry=registry)
 

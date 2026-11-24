@@ -30,6 +30,7 @@ def generate_scenario(
     seed: int = 42,
     spikes: bool = True,
     horizon_minutes: int = 20,
+    min_fault_start: int = 60,
 ) -> pd.DataFrame:
     """One series: healthy baseline, optional distractor spikes, optional single fault episode.
 
@@ -40,8 +41,8 @@ def generate_scenario(
     if not 120 <= minutes <= 1440:
         raise DataGenerationError("minutes must be within 120-1440")
     if fault_type != "none":
-        if fault_start < 60:
-            raise DataGenerationError("fault_start must be >= 60 (feature warm-up needs history)")
+        if fault_start < min_fault_start:
+            raise DataGenerationError(f"fault_start must be >= {min_fault_start}")
         if not 10 <= ramp_minutes <= 180:
             raise DataGenerationError("ramp_minutes must be within 10-180")
         if fault_start + ramp_minutes + hold_minutes >= minutes - horizon_minutes:

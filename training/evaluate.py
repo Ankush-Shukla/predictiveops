@@ -66,36 +66,61 @@ def score_metrics(y: np.ndarray, scores: np.ndarray, threshold: float, *, probab
     return m
 
 
-def event_metrics(segment: pd.DataFrame, pred: pd.Series, horizon: int) -> dict:
-    """Event-level view on a raw (unfiltered) segment.
+SUDDEN_EPISODE_MINUTES = 30  # episodes shorter than this (ramp <= 10 + hold) count as "sudden"
 
-    ``segment`` has columns series_id, is_unhealthy and index aligned with ``pred`` for kept
-    (scorable) rows only. An onset is 'detected' if any alert fired in the H minutes before it;
-    lead time = minutes between the earliest such alert and the onset.
+
+def event_records(segment: pd.DataFrame, pred: pd.Series, horizon: int) -> list[dict]:
+    """One record per failure onset in the segment: detected?, lead time, fault type, speed.
+
+    ``segment`` needs series_id and is_unhealthy; fault_type / episode_id are used when present.
+    An onset is 'detected' if any alert fired in the H minutes before it; lead = minutes between
+    the earliest such alert and the onset. Onsets with an incomplete warning window are skipped.
     """
-    detected, leads, total = 0, [], 0
-    for _, g in segment.groupby("series_id", sort=False):
-        g = g.reset_index()  # keep original index in 'index'
+    recs: list[dict] = []
+    for sid, g in segment.groupby("series_id", sort=False):
+        g = g.reset_index()  # original index kept in 'index'
         u = g["is_unhealthy"].to_numpy()
         onsets = np.flatnonzero(u & ~np.concatenate([[False], u[:-1]]))
         alert = g["index"].map(pred).fillna(False).to_numpy().astype(bool)
         for o in onsets:
-            if o < horizon:  # incomplete warning window at segment start
+            if o < horizon:
                 continue
-            total += 1
             win = alert[o - horizon : o]
-            if win.any():
-                detected += 1
-                leads.append(int(horizon - np.argmax(win)))
+            rec = {"series_id": sid, "onset": int(o), "detected": bool(win.any()),
+                   "lead": int(horizon - np.argmax(win)) if win.any() else None}
+            if "fault_type" in g:
+                rec["fault_type"] = str(g["fault_type"].iloc[o])
+            if "episode_id" in g and g["episode_id"].iloc[o] >= 0:
+                ep = g["episode_id"].iloc[o]
+                rec["speed"] = ("sudden" if int((g["episode_id"] == ep).sum()) < SUDDEN_EPISODE_MINUTES
+                                else "gradual")
+            recs.append(rec)
+    return recs
+
+
+def summarize_events(recs: list[dict], key: str | None = None) -> dict:
+    """Aggregate records overall (key=None) or grouped by a record field."""
+    def agg(rs: list[dict]) -> dict:
+        leads = [r["lead"] for r in rs if r["lead"] is not None]
+        det = sum(r["detected"] for r in rs)
+        return {"failure_events": len(rs), "detected_events": det,
+                "event_recall": det / len(rs) if rs else float("nan"),
+                "median_lead_time_min": float(np.median(leads)) if leads else float("nan")}
+    if key is None:
+        return agg(recs)
+    groups: dict[str, list[dict]] = {}
+    for r in recs:
+        if key in r:
+            groups.setdefault(r[key], []).append(r)
+    return {k: agg(v) for k, v in sorted(groups.items())}
+
+
+def event_metrics(segment: pd.DataFrame, pred: pd.Series, horizon: int) -> dict:
+    """Event-level summary plus the false-alert rate on the raw segment (see ``event_records``)."""
+    out = summarize_events(event_records(segment, pred, horizon))
     days = max((segment["timestamp"].max() - segment["timestamp"].min()).total_seconds() / 86400, 1e-9)
-    n_series = segment["series_id"].nunique()
     a = pred.reindex(segment.index).fillna(False).astype(bool)
     # false alert = alert on a healthy row whose horizon contains no failure onset
     false_alert_rows = int((a & ~segment["is_unhealthy"] & (segment["label_failure_within_h"] == 0)).sum())
-    return {
-        "failure_events": total,
-        "detected_events": detected,
-        "event_recall": detected / total if total else float("nan"),
-        "median_lead_time_min": float(np.median(leads)) if leads else float("nan"),
-        "false_alert_rows_per_series_day": false_alert_rows / (days * n_series),
-    }
+    out["false_alert_rows_per_series_day"] = false_alert_rows / (days * segment["series_id"].nunique())
+    return out

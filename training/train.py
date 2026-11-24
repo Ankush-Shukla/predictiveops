@@ -27,7 +27,13 @@ from data.synthetic.generator import add_labels
 from training import tracking
 from training.baseline import threshold_score
 from training.calibration import choose_and_fit_calibrator
-from training.evaluate import event_metrics, score_metrics, select_threshold
+from training.evaluate import (
+    event_metrics,
+    event_records,
+    score_metrics,
+    select_threshold,
+    summarize_events,
+)
 from training.gates import GateConfig, evaluate_gates
 from training.split import chronological_split
 
@@ -124,8 +130,12 @@ def run_training(df: pd.DataFrame, cfg: TrainConfig) -> TrainingResult:
 
     # --- event-level view on the test segment ---
     pred = pd.Series(prob["test"] >= threshold, index=idx["test"])
-    seg_cols = ["series_id", "timestamp", "is_unhealthy", "label_failure_within_h"]
-    event = event_metrics(df.loc[sp.test.index, seg_cols], pred, cfg.horizon_minutes)
+    seg_cols = ["series_id", "timestamp", "is_unhealthy", "label_failure_within_h", "fault_type",
+                "episode_id"]
+    seg = df.loc[sp.test.index, [c for c in seg_cols if c in df.columns]]
+    event = event_metrics(seg, pred, cfg.horizon_minutes)
+    recs = event_records(seg, pred, cfg.horizon_minutes)
+    event_by_fault, event_by_speed = summarize_events(recs, "fault_type"), summarize_events(recs, "speed")
 
     # --- explainability: global permutation importance on a validation sample ---
     rng = np.random.default_rng(cfg.seed)
@@ -139,7 +149,8 @@ def run_training(df: pd.DataFrame, cfg: TrainConfig) -> TrainingResult:
     gates = evaluate_gates(m_test, event, base_default["pr_auc"], cfg.gates)
     version = cfg.version or f"v{datetime.now(UTC):%Y%m%d%H%M%S}-{cfg.model_type}"
     report = {
-        "val": m_val, "test": m_test, "event": event,
+        "val": m_val, "test": m_test, "event": event, "event_by_fault": event_by_fault,
+        "event_by_speed": event_by_speed,
         "baseline_default": base_default, "baseline_tuned": base_tuned,
         "calibration": cal_report, "threshold_fpr_constraint_met": constraint_met,
         "top_features_permutation": top, "gates": gates.model_dump(),
@@ -152,7 +163,8 @@ def run_training(df: pd.DataFrame, cfg: TrainConfig) -> TrainingResult:
         "data_source": data_source, "seed": cfg.seed,
         "trained_at": datetime.now(UTC).isoformat(), "metric_columns": list(METRIC_COLUMNS),
         "evaluation": {"test": {k: v for k, v in m_test.items() if k != "calibration_curve"},
-                       "event": event, "gates": gates.model_dump(),
+                       "event": event, "event_by_fault": event_by_fault, "event_by_speed": event_by_speed,
+                       "gates": gates.model_dump(),
                        "baseline_default_pr_auc": base_default["pr_auc"]},
         "top_features_permutation": top,
         "environment": {"python": platform.python_version(), "sklearn": sklearn.__version__},

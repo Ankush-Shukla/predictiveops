@@ -40,6 +40,7 @@ def test_report_contents_and_honest_split(trained):
     for k in ("f1", "fpr", "pr_auc", "brier", "ece", "precision", "recall"):
         assert k in r["test"]
     assert "baseline_default" in r and "baseline_tuned" in r and "event" in r
+    assert "event_by_fault" in r and "event_by_speed" in r
     assert len(r["top_features_permutation"]) == 15
     assert res.bundle.metadata["data_source"] == "synthetic"
     assert "not evidence of real-world" in res.bundle.metadata["disclaimer"]
@@ -55,6 +56,7 @@ def test_mlflow_run_and_registry(trained):
     res, root = trained
     assert res.mlflow and res.mlflow["run_id"] and res.mlflow["registered_version"] == "1"
     import mlflow
+    import mlflow.pyfunc
     from mlflow.tracking import MlflowClient
 
     mlflow.set_tracking_uri(f"sqlite:///{root}/mlflow.db")
@@ -63,6 +65,12 @@ def test_mlflow_run_and_registry(trained):
     assert "test_f1" in run.data.metrics and run.data.params["model_type"] == "hgb"
     mv = c.get_model_version_by_alias("predictiveops-failure-model", "champion")
     assert str(mv.version) == "1"
+    # the registered MLflow model is loadable and agrees with the in-process predictor
+    model = mlflow.pyfunc.load_model("models:/predictiveops-failure-model@champion")
+    window = trained[0].bundle and generate_dataset(GEN).query("series_id == 'svc-00'").iloc[:200]
+    out = model.predict(window.reset_index(drop=True))
+    direct = Predictor(res.bundle, res.version).predict(window.reset_index(drop=True))
+    assert out["probability"].iloc[0] == pytest.approx(direct.probability)
 
 
 def test_champion_pointer_and_reload(trained):

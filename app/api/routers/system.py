@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
@@ -36,6 +36,15 @@ def model_info(p: Predictor = Depends(get_predictor)) -> dict:
         "evaluation": m.get("evaluation"), "top_features": m.get("top_features_permutation"),
         "disclaimer": m.get("disclaimer"),
     }
+
+
+@router.get("/v1/sources", tags=["system"])
+def sources(request: Request) -> dict:
+    """Status of the Prometheus poller (disabled unless PREDICTIVEOPS_PROMETHEUS_ENABLED=true)."""
+    poller = request.app.state.poller
+    if poller is None:
+        return {"prometheus": {"enabled": False}}
+    return {"prometheus": {"enabled": True, "step_seconds": poller.step, "services": poller.status}}
 
 
 @router.get("/metrics", tags=["system"], include_in_schema=False)

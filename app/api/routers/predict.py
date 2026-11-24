@@ -3,11 +3,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_predictor, get_state, require_api_key
+from app.api.ingestion import ingest_points
 from app.api.schemas import IngestRequest, IngestResponse, PredictRequest, SeriesStatus
 from app.api.state import ApiState
 from app.models.predictor import Predictor
 from app.models.schemas import PredictionResult, points_to_frame
-from app.services.series_buffer import SeriesBuffer
 
 router = APIRouter(prefix="/v1", tags=["prediction"])
 
@@ -21,47 +21,11 @@ def predict(req: PredictRequest, p: Predictor = Depends(get_predictor),
     return result
 
 
-LEVEL_NUM = {"none": 0, "warn": 1, "alert": 2, "remediate": 3}
-
-
-def apply_policy(state: ApiState, p: Predictor, series_id: str, preds: list) -> list:
-    """Run each newly scored minute through the policy engine, in time order; update metrics."""
-    c, decisions = state.collectors, []
-    for pr in preds:
-        n_before = state.store.count_alerts()
-        d = state.policy.evaluate(series_id, pr.probability, pr.threshold, pr.as_of, pr.model_version)
-        decisions.append(d)
-        if d.action_outcome:
-            c.actions.labels(outcome=d.action_outcome).inc()
-        if state.store.count_alerts() > n_before:
-            c.alerts.labels(level=state.store.list_alerts(1)[0]["level"]).inc()
-    if preds:
-        last, d = preds[-1], decisions[-1]
-        state.latest[series_id] = last
-        c.probability.labels(series_id=series_id).set(last.probability)
-        c.alert.labels(series_id=series_id).set(int(last.predicted_failure))
-        c.policy_level.labels(series_id=series_id).set(LEVEL_NUM[d.level])
-        c.predictions.labels(source="ingest").inc(len(preds))
-    return decisions
-
-
 @router.post("/metrics/ingest", response_model=IngestResponse, dependencies=[Depends(require_api_key)])
 def ingest(req: IngestRequest, p: Predictor = Depends(get_predictor),
            state: ApiState = Depends(get_state)) -> IngestResponse:
     """Append samples to a series buffer, score every new minute and run the alert policy."""
-    with state.lock:
-        buf = state.buffers.setdefault(req.series_id, SeriesBuffer(state.settings.ingest_buffer_minutes))
-        out = buf.add(req.samples)
-        state.collectors.ingested.inc(out.accepted)
-        preds: list = []
-        if out.accepted and len(buf) >= p.required_history:
-            preds = p.predict_recent(buf.frame(), out.accepted)
-        decisions = apply_policy(state, p, req.series_id, preds)
-        return IngestResponse(
-            series_id=req.series_id, accepted=out.accepted, rejected=out.rejected,
-            gap_resets=out.gap_resets, buffered=len(buf), required_history=p.required_history,
-            prediction=preds[-1] if preds else None, scored_samples=len(preds),
-            decision=decisions[-1] if decisions else None)
+    return ingest_points(state, p, req.series_id, req.samples)
 
 
 def _status(sid: str, state: ApiState) -> SeriesStatus:

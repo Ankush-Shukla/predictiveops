@@ -1,9 +1,9 @@
 # PROJECT_STATUS
 
-_Last updated: 2026-11-21 (Phase 6)_
+_Last updated: 2026-11-23 (Phase 10, final)_
 
 ## Current phase
-Phases 1, 2, 4, 5 and 6 **complete** (the `demo_app` exporter from Phase 3 is still open). Next: Phase 7 (canary validation).
+**All ten phases are complete.** The only remaining item is outside the author's reach: running `docker compose up` on a machine with Docker and reporting what fails (see the verification matrix). No other known blockers.
 
 ## Completed
 - **Phase 1** scaffold, settings, logging, domain definitions, schemas, synthetic generator + CLI.
@@ -27,7 +27,50 @@ Phases 1, 2, 4, 5 and 6 **complete** (the `demo_app` exporter from Phase 3 is st
   - API: ingest scores every new minute (`Predictor.predict_recent`) and runs the policy in order; `/v1/policy`, `/v1/policy/evaluate`, `/v1/alerts`, `/v1/audit`; Prometheus `policy_level`, `alerts_total`, `remediation_decisions_total`; `/v1/simulate` returns a policy replay.
   - Dashboard: alert-level strip, policy summary sentence, "Send scenario to live ingestion" with alerts and audit tables. Also fixed a chart bug that joined the probability line across the failure period.
 
+- **Phase 7**
+  - `app/services/canary_models.py` (validated `CanaryConfig`, assessment models), `canary.py` (`assess` pure decision function, `CanaryEvaluator`, `CanaryService`).
+  - `PolicyEngine.request_action`: shared gated + audited path (refactor of the remediation gates; behaviour unchanged, regression-tested). `canary_runs` table in the SQLite store.
+  - API: `POST /v1/canary/evaluate` (key-protected when configured), `GET /v1/canary[/{id}]`, `POST /v1/canary/simulate`; `PREDICTIVEOPS_CANARY` and `PREDICTIVEOPS_CANARY_TARGETS` settings; Prometheus `canary_evaluations_total`.
+  - Dashboard: "Canary release check" (baseline vs candidate risk, decision strip, plain-language outcome, late-regression toggle).
+
+- **Phase 3 remainder + Phase 8**
+  - `demo_app/`: `LiveSimulator` (reuses the generator's baseline and fault models, so inputs are in-distribution), FastAPI target with Prometheus gauges `demo_<metric>` (SIMULATED), `/work` whose failures follow the simulated error rate, `/state`, and fault injection protected by `DEMO_ADMIN_TOKEN` (disabled when unset).
+  - `app/services/prometheus_client.py` (validated service names, one expression per model metric, rows missing any metric dropped, ambiguity/errors raise), `app/api/ingestion.py` (single shared ingestion path), `app/api/poller.py` (background poller, failure-tolerant, stable logical timestamps), `GET /v1/sources`.
+  - `docker/Dockerfile` (targets runtime/trainer, non-root, healthcheck), `docker-compose.yml` (trainer -> api, demo-app, optional canary + mlflow profiles, prometheus, node-exporter, grafana), `docker-compose.remediation.yml` (opt-in socket), `prometheus/prometheus.yml`, `monitoring/alert_rules.yml`, Grafana datasource/provider/dashboard (10 panels), `.github/workflows/{ci,ml-gates}.yml`, `scripts/canary_smoke.py`, `scripts/gate_report.py`, `requirements-{runtime,train}.txt`.
+  - Settings: `PREDICTIVEOPS_PROMETHEUS_*`; empty environment variables are now ignored (so an empty `PREDICTIVEOPS_API_KEY` in compose means "no key", not "empty key").
+
+### Verification matrix for Phase 8
+| Item | Result |
+|---|---|
+| `promtool check rules` / `check config` (Prometheus 3.5.0) | passed |
+| `hadolint` on the Dockerfile | clean |
+| GitHub workflow schema + Compose spec schema (`check-jsonschema`) | passed |
+| Static invariants (pinned images, no hardcoded secrets, no docker.sock by default, labels/targets/service names/clocks consistent, least-privilege workflows) | 10 tests pass |
+| **Live end-to-end on native processes**: real Prometheus + node_exporter + demo target + API poller; fault injected; policy alert and dry-run remediation audit recorded; Prometheus scrapes the API's metrics; alert rules loaded | passed (3 min 6 s) |
+| Every PromQL expression in the Grafana dashboard evaluated against that Prometheus (parse + execute) | passed |
+| `scripts/canary_smoke.py` (20 seeds/type, real champion): 0 % false rollbacks, 100 % detection; exits 3 when a limit is missed | passed |
+| `scripts/gate_report.py` | passed |
+| `docker build`, `docker compose up`, image pulls of the pinned tags | **NOT executed** |
+| Grafana actually loading the provisioning and rendering the dashboard | **NOT executed** (queries verified, UI not) |
+| GitHub Actions actually running | **NOT executed** |
+| Real container restart / canary stop through Docker | **NOT executed** |
+| node_exporter inside a container with the `/host` mount | **NOT executed** (native binary only) |
+
+- **Phase 9**
+  - Evaluation: per-onset event records with breakdown by fault mechanism and sudden/gradual episodes (now in every training report and model metadata); `training/robustness.py` + `scripts/evaluate_robustness.py` (seed variability, held-out fault mechanism with static-threshold comparison, canary study over observation windows and fault start times); canary simulation extracted to `app/services/canary_sim.py`; full write-up in `docs/evaluation.md`.
+  - Static-threshold safety-net alert rules (`monitoring/alert_rules.yml`, `promtool` OK, 9 rules) kept in sync with the baseline by a test.
+  - Tests: coverage-gap tests (champion loading at startup, lazy Docker executor, 500 handler, demo clock thread, registered MLflow model loads and agrees with the predictor), robustness/event tests, automated browser test (Playwright; `tests/e2e/test_dashboard_browser.py`).
+
+- **Phase 10**
+  - README rewritten as a single coherent document (overview, architecture diagram, quick start, Compose, API, policy, canary, configuration, testing, layout, verification status, limitations).
+  - `docs/requirements_traceability.md` (every synopsis objective, scope item and outcome -> modules, tests, honest status), `docs/DEMO.md` (presenter's guide), `docs/architecture.md` finalised (all components built; consolidated API table).
+  - `scripts/demo_walkthrough.py`: narrated, executable tour (healthy run, memory-leak forecast, live ingestion with alerts/audit, policy preview, canary rollback/promote, canary blind spot) with in-process tests.
+  - `tests/unit/test_docs.py`: links resolve, referenced files exist, honesty statements stay in the README.
+
 ## Verified (executed in the sandbox)
+- Phase 9: clean virtualenv from `requirements-dev.txt`: 159 passed, 3 skipped (e2e needing external binaries/Playwright), coverage 99 %, ruff clean. Runtime-only virtualenv (`requirements-runtime.txt`, no MLflow): API loads the champion, simulate + canary + canary smoke + demo app all work. Browser e2e 4 passed. Robustness studies reproduced exactly on a second run. Final run after all changes (Phase 10, working environment): 169 passed, 2 skipped (live-stack e2e), 99 % coverage, ruff clean; the 6 e2e tests (real Prometheus + node_exporter live stack, and 4 browser tests) rerun afterwards: 6 passed in 3 min 54 s.
+- Phase 7: `assess` unit tests (hold before minimum even when terrible, promote, rollback by fraction+margin, hard-fail run, not-attributable when baseline equally bad, inconclusive hold, observation limit, timestamp overlap, missing baseline); service tests (promote/hold never act; rollback dry-run, live execute once then cooldown; blocked: no target / disabled / wrong action; unconfigured service cannot reach other targets); API tests (request cannot name a container, key protection, persistence, simulate has no side effects). Dashboard canary flow driven with headless Chromium, no console errors.
+- Canary simulations with the real trained model over 60 seeds per candidate type: see the measured results under Known issues. Rollbacks were recorded as dry-run only.
 - Phase 6: policy unit tests (levels, transient spikes, dry-run, every blocked outcome, cooldown, hourly cap, restart persistence, executor failure containment, Docker executor safety against a fake client) and API integration tests (scripted probability stream, real-model ingest, preview has no side effects, simulate replay never writes the real audit). Dashboard live-ingestion flow driven with headless Chromium: 360 samples ingested, alert and remediate rows and a `blocked_no_target` audit row appeared, no console errors.
 - Phase 5: 72 tests pass in total (API tests use FastAPI TestClient against a really trained model); `ruff` clean.
 - Dashboard driven with a headless Chromium (Playwright) against a live uvicorn process: loads, runs scenarios, plays/scrubs, no console errors, no horizontal overflow at 390 px width; desktop and mobile screenshots inspected.
@@ -45,13 +88,15 @@ Phases 1, 2, 4, 5 and 6 **complete** (the `demo_app` exporter from Phase 3 is st
   A model trained on seed 42 scored on a freshly simulated seed-777 dataset: F1 0.816, FPR 0.011.
 - Gates (F1 ≥ 0.70, FPR ≤ 0.05, PR-AUC > baseline) pass on this run.
 
-## Not verified / not started
-- Docker, Compose, Prometheus, Grafana, GitHub Actions (no Docker in sandbox; Phase 8).
+## Not verified (see matrix above)
 - `DockerExecutor` has only been exercised against a fake client, never a real Docker daemon: **real restarts are unverified**.
-- No canary logic or `demo_app` exporter yet; the API is not yet fed by Prometheus.
 - Frontend has no automated browser test in the repo (verified manually with Playwright only); no auth on `/v1/simulate` or `/v1/predict`.
 
 ## Known issues / caveats
+- **The model does not generalise to unseen fault mechanisms** (held-out: memory leak 2/97, error ramp 2/103, CPU contention 24/108 events detected; thresholds detect all). For mechanisms it was trained on it has fewer false alerts than thresholds (0.85 % vs 1.13 % of healthy minutes on the reference split; 0.22 % vs 1.02 % on fresh data) and better minute-level recall, but event-level detection and lead are similar. Mitigation shipped: static safety-net alert rules. See `docs/evaluation.md`.
+- **The canary only catches faults that start before its decision point.** Default minimum observation is 20 min (fast demo); fault starting 30 min after deploy is mostly promoted. 60+ min recommended for real use (0/150 false rollbacks at 20, 60 and 120 min).
+- Event recall on the reference test split is 27/27 but from only 27 events (2 sudden); wide uncertainty.
+- Deprecation warning from Starlette about `httpx` in `TestClient`; harmless for now, may need `httpx2` later.
 - All numbers come from a simulator whose fault mechanics are simple; they show the pipeline works, **not** that real failures are predictable. The ML advantage over thresholds is real but modest (F1 0.82 vs 0.68) on this data.
 - 27 test failure events is a small sample; event recall of 100 % has wide uncertainty. Not yet broken down by fault type or sudden vs gradual faults, and no held-out fault type experiment.
 - "Unhealthy" requires 3 sustained minutes, so onsets (and labels) are slightly delayed vs. first threshold breach.
@@ -68,8 +113,17 @@ Phases 1, 2, 4, 5 and 6 **complete** (the `demo_app` exporter from Phase 3 is st
 - Policy state (counters, levels) is in memory; audit/alerts persist in SQLite but counters restart from zero after a restart. Single-process only (SQLite single connection + lock).
 - `/v1/policy/evaluate` and `/v1/simulate` are unauthenticated and unthrottled.
 
-## Next steps
-1. Phase 7: `CanaryEvaluator` (baseline vs candidate scored by the same model, configurable thresholds, minimum observation period, hold on insufficient data, rollback only of labelled canary containers) + rollback simulation; `/v1/canary/*`; dashboard panel.
-2. Phase 3 remainder: `demo_app` with Prometheus metrics + fault injection; Prometheus query client feeding the API.
-3. Phase 8: Docker Compose, Prometheus, Grafana, GitHub Actions (written, validated statically, flagged unexecuted here).
-4. Add per-fault-type and held-out-fault evaluation to the training report.
+- **Canary limitation:** a regression that begins after the decision is promoted (documented in a test and shown on the dashboard). The default 20-minute minimum is a trade-off; real use needs a longer period or continued monitoring (the alert policy still applies after promotion).
+- Measured with the real model over 60 seeds per candidate type (synthetic, in-distribution; faults begin at minute 10): healthy candidates 60/60 promoted (0 false rollbacks); memory-leak, latency, error, CPU and disk candidates 300/300 rolled back at the first checkpoint (minute 48). This is the simulator agreeing with itself (same fault generator that trained the model, early and strong faults), so it says little about subtle or real-world regressions.
+- Rollback path against a real Docker daemon is unverified (fake client only), as with remediation.
+
+- Image tags (`prom/prometheus:v3.5.0`, `prom/node-exporter:v1.9.1`, `grafana/grafana:12.1.0`) were chosen from memory/known releases; Prometheus 3.5.0 and node_exporter 1.9.1 binaries were downloaded and run natively, Grafana was not available to run.
+- The demo is **accelerated**: Prometheus scrapes every 2 s, the target ticks every 5 s, one 5 s step = one model "minute". Occasional duplicated/skipped ticks from clock drift are possible. Real-time use sets step and tick to 60 s.
+- The model does **not** consume Node Exporter metrics (different scales from the synthetic training data); using real metrics requires new PromQL **and retraining on real data**. This is the largest gap between the demo and a real deployment.
+- Poller runs in the API process (single instance); it re-queries a lookback window each poll rather than keeping a cursor. No Alertmanager (rules are visible in Prometheus only).
+- The e2e test takes about 3 minutes and needs Prometheus/node_exporter binaries; it is skipped by default (`pytest -m e2e` with `PROMETHEUS_BIN`).
+
+## Next steps (for the user / future work)
+1. Run `docker compose up --build` (README) and report anything that fails; this is the main unexecuted item.
+2. Decide whether to raise the canary default minimum observation from 20 to 60 minutes (recommended for real use).
+3. Future work, out of scope for the minor project: retrain on real metrics, add data for more fault mechanisms, keep monitoring the canary after promotion, add Alertmanager.

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.models.schemas import MetricPoint, PredictionResult
 from app.policies.models import PolicyDecision
+from app.services.canary_models import CanaryAssessment, CanaryConfig
 
 FaultChoice = Literal["none", "memory_leak", "latency_creep", "error_ramp", "cpu_contention",
                       "disk_saturation"]
@@ -95,3 +96,72 @@ class SimulateResponse(BaseModel):
     summary: SimulateSummary
     policy_level: list[str | None]
     policy_summary: PolicyReplaySummary
+
+
+SERVICE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+
+
+class CanaryEvaluateRequest(BaseModel):
+    service: str = Field(pattern=SERVICE_PATTERN,
+                         description="Service name; selects the configured canary target (never a container)")
+    baseline: list[MetricPoint] | None = Field(default=None, max_length=1440,
+                                               description="Recent 1-minute samples of the stable version")
+    candidate: list[MetricPoint] = Field(min_length=1, max_length=1440,
+                                         description="Recent 1-minute samples of the canary version")
+
+
+class RollbackInfo(BaseModel):
+    outcome: str
+    detail: str
+    container: str | None
+
+
+class CanaryResult(BaseModel):
+    id: int | None = None
+    service: str
+    model_version: str
+    evaluated_at: str
+    assessment: CanaryAssessment
+    rollback: RollbackInfo | None = None
+    config: CanaryConfig
+
+
+class CanarySimulateRequest(BaseModel):
+    candidate_fault: FaultChoice = "memory_leak"
+    seed: int = Field(default=42, ge=0, le=2**31 - 1)
+    minutes: int = Field(default=180, ge=90, le=480)
+    fault_start: int = Field(default=10, ge=5, le=400)
+    ramp_minutes: int = Field(default=45, ge=10, le=180)
+
+
+class CanaryCheckpoint(BaseModel):
+    minute: int
+    decision: str
+    observed_minutes: int
+    candidate_alert_fraction: float | None
+    baseline_alert_fraction: float | None
+    candidate_mean: float | None
+    baseline_mean: float | None
+
+
+class CanaryFinal(BaseModel):
+    decision: str
+    minute: int | None
+    observed_minutes: int
+    reasons: list[str]
+    rollback_outcome: str | None = None
+    rollback_container: str | None = None
+
+
+class CanarySimulateResponse(BaseModel):
+    data_source: Literal["synthetic"] = "synthetic"
+    model_version: str
+    threshold: float
+    candidate_fault: str
+    minutes: int
+    baseline_probability: list[float | None]
+    candidate_probability: list[float | None]
+    candidate_unhealthy: list[bool]
+    checkpoints: list[CanaryCheckpoint]
+    final: CanaryFinal
+    config: CanaryConfig

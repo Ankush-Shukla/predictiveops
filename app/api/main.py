@@ -12,19 +12,21 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.errors import register_error_handlers
-from app.api.routers import policy, predict, simulate, system
+from app.api.poller import PrometheusPoller
+from app.api.routers import canary, policy, predict, simulate, system
 from app.api.state import ApiState
 from app.core.config import Settings, get_settings
 from app.core.exceptions import PredictiveOpsError
 from app.core.logging import configure_logging, get_logger
 from app.models.predictor import Predictor
+from app.services.prometheus_client import PrometheusClient
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 log = get_logger("app.api")
 
 
 def create_app(settings: Settings | None = None, predictor: Predictor | None = None,
-               *, load_model: bool = True) -> FastAPI:
+               *, load_model: bool = True, prometheus_client: PrometheusClient | None = None) -> FastAPI:
     settings = settings or get_settings()
 
     @asynccontextmanager
@@ -36,12 +38,25 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
                 log.info("champion model loaded", extra={"version": app.state.api.predictor.version})
             except PredictiveOpsError as exc:
                 log.warning("no champion model loaded", extra={"reason": str(exc)})
+        poller = None
+        if settings.prometheus_enabled and settings.prometheus_service_list:
+            client = prometheus_client or PrometheusClient(settings.prometheus_url)
+            poller = PrometheusPoller(
+                app.state.api, client, settings.prometheus_service_list,
+                step_seconds=settings.prometheus_step_seconds,
+                interval_seconds=settings.prometheus_poll_seconds,
+                lookback_steps=settings.prometheus_lookback_steps)
+            app.state.poller = poller
+            poller.start()
         yield
+        if poller:
+            poller.stop()
 
-    app = FastAPI(title="PredictiveOps API", version="0.6.0", lifespan=lifespan,
+    app = FastAPI(title="PredictiveOps API", version="0.8.0", lifespan=lifespan,
                   description="Predicts the probability of service failure within the next "
                               "15-30 minutes. Demo data is SYNTHETIC.")
     app.state.api = ApiState(settings=settings, predictor=predictor)
+    app.state.poller = None
     register_error_handlers(app)
 
     @app.middleware("http")
@@ -60,6 +75,7 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
     app.include_router(system.router)
     app.include_router(predict.router)
     app.include_router(policy.router)
+    app.include_router(canary.router)
     app.include_router(simulate.router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS audit_log(
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, series_id TEXT NOT NULL,
   action TEXT NOT NULL, target TEXT, outcome TEXT NOT NULL, dry_run INTEGER NOT NULL,
   probability REAL, model_version TEXT, reason TEXT, details TEXT);
+CREATE TABLE IF NOT EXISTS canary_runs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, service TEXT NOT NULL,
+  decision TEXT NOT NULL, result TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_audit_target_ts ON audit_log(target, ts);
 """
 # Outcomes that count against cooldown / rate limits (dry-run counts, so limits behave identically).
@@ -80,6 +83,23 @@ class AuditStore:
             r["dry_run"] = bool(r["dry_run"])
             r["details"] = json.loads(r["details"] or "{}")
         return rows
+
+    def add_canary_run(self, *, ts: datetime, service: str, decision: str, result: dict) -> int:
+        with self._lock, self._db:
+            cur = self._db.execute("INSERT INTO canary_runs(ts,service,decision,result) VALUES(?,?,?,?)",
+                                   (_iso(ts), service, decision, json.dumps(result, default=str)))
+            return int(cur.lastrowid)
+
+    def get_canary_run(self, run_id: int) -> dict | None:
+        with self._lock:
+            r = self._db.execute("SELECT * FROM canary_runs WHERE id=?", (run_id,)).fetchone()
+        return None if r is None else {**dict(r), "result": json.loads(r["result"])}
+
+    def list_canary_runs(self, limit: int = 20) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute("SELECT id,ts,service,decision FROM canary_runs ORDER BY id DESC LIMIT ?",
+                                    (limit,)).fetchall()
+        return [dict(r) for r in rows]
 
     def count_alerts(self) -> int:
         with self._lock:

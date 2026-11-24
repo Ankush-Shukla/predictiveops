@@ -1,0 +1,64 @@
+name: ml-gates
+# Trains a model on synthetic data, enforces the quality gates (F1, false-positive rate, beats the
+# threshold baseline) and a predictive canary smoke test. Only a model that passes is published as
+# the "champion-model" artifact (and, if configured, registered in a remote MLflow).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1"
+  push:
+    branches: [ main ]
+    paths: [ "training/**", "data/**", "app/features/**", "app/models/**", "app/services/canary*.py", "scripts/**" ]
+permissions:
+  contents: read
+
+jobs:
+  train-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PREDICTIVEOPS_MLFLOW_TRACKING_URI: sqlite:///artifacts/mlflow.db
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-train.txt
+      - name: Generate synthetic data
+        run: python scripts/generate_data.py --days 14 --series 4 --seed 42 --out data/generated/synthetic.csv.gz
+      - name: Train, evaluate, enforce gates, promote locally
+        run: python scripts/train.py --data data/generated/synthetic.csv.gz --model-type hgb --promote --enforce-gates
+      - name: Canary smoke test (same champion model)
+        run: python scripts/canary_smoke.py --seeds 20
+      - name: Job summary
+        if: always()
+        run: python scripts/gate_report.py artifacts/models >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: champion-model
+          path: |
+            artifacts/models
+            artifacts/mlflow.db
+          retention-days: 90
+          if-no-files-found: error
+
+  register-remote:
+    # Optional: only runs on main, after gates passed, when a remote MLflow is configured via repository secrets.
+    needs: train-validate
+    if: github.ref == 'refs/heads/main' && vars.MLFLOW_REMOTE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PREDICTIVEOPS_MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+      MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-train.txt
+      - run: python scripts/generate_data.py --days 14 --series 4 --seed 42 --out data/generated/synthetic.csv.gz
+      - run: python scripts/train.py --data data/generated/synthetic.csv.gz --model-type hgb --promote --enforce-gates

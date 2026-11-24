@@ -38,20 +38,25 @@ function plot(c, ys, o) {
   const y = (v) => H - pad.b - ((v - o.min) / (o.max - o.min)) * (H - pad.t - pad.b);
   const band = (rs, fill) => { g.fillStyle = fill; rs.forEach(([a, b]) => g.fillRect(x(a), pad.t, Math.max(x(b - 1) - x(a), 2), H - pad.t - pad.b)); };
   if (o.warn) band(o.warn, "rgba(11,114,133,.12)");
-  band(o.fail, "rgba(181,67,42,.26)");
+  band(o.fail || [], "rgba(181,67,42,.26)");
   if (o.big) {
     g.font = "12px system-ui"; g.fillStyle = css("--muted"); g.strokeStyle = css("--rule"); g.lineWidth = 1;
     [0, .25, .5, .75, 1].forEach((v) => { g.beginPath(); g.moveTo(pad.l, y(v)); g.lineTo(W - pad.r, y(v)); g.stroke(); g.textAlign = "right"; g.fillText(Math.round(v * 100) + "%", pad.l - 6, y(v) + 4); });
     g.textAlign = "center";
-    for (let m = 0; m < n; m += 60) g.fillText(clock(m).slice(0, 5), x(m), H - 6);
+    for (let m = 0; m < n; m += o.step || 60) g.fillText(o.label ? o.label(m) : clock(m).slice(0, 5), x(m), H - 6);
     g.setLineDash([6, 4]); g.strokeStyle = css("--ink"); g.lineWidth = 1.5;
     g.beginPath(); g.moveTo(pad.l, y(o.thr)); g.lineTo(W - pad.r, y(o.thr)); g.stroke(); g.setLineDash([]);
   }
+  (o.extra || []).forEach((e) => {
+    g.strokeStyle = e.color; g.lineWidth = 1.8; g.beginPath(); let pn = false;
+    e.ys.forEach((v, i) => { if (v === null) { pn = false; return; } pn ? g.lineTo(x(i), y(v)) : g.moveTo(x(i), y(v)); pn = true; });
+    g.stroke();
+  });
   g.strokeStyle = o.color; g.lineWidth = o.big ? 2.2 : 1.4; g.beginPath();
   let pen = false;
   ys.forEach((v, i) => { if (v === null) { pen = false; return; } pen ? g.lineTo(x(i), y(v)) : g.moveTo(x(i), y(v)); pen = true; });
   g.stroke();
-  if (cur < n && ys[cur] !== null && ys[cur] !== undefined) {
+  if (!o.nocursor && cur < n && ys[cur] !== null && ys[cur] !== undefined) {
     g.strokeStyle = css("--ink"); g.lineWidth = 1; g.beginPath(); g.moveTo(x(cur), pad.t); g.lineTo(x(cur), H - pad.b); g.stroke();
     g.fillStyle = o.color; g.beginPath(); g.arc(x(cur), y(ys[cur]), o.big ? 5 : 3, 0, 7); g.fill();
   }
@@ -108,6 +113,38 @@ async function sendLive() {
     msg.textContent = `Sent ${sent} samples, scored ${scored} minutes.`;
     await loadTables();
   } catch (e) { msg.textContent = "Could not send: " + e.message; } finally { btn.disabled = false; }
+}
+
+let C = null;
+function drawCanary() {
+  if (!C) return;
+  const fail = ranges(C.candidate_unhealthy), step = C.minutes > 240 ? 60 : 30;
+  plot($("#canchart"), C.candidate_probability, { min: 0, max: 1, color: css("--teal"), thr: C.threshold, big: true, fail,
+    nocursor: true, step, label: (m) => m + " min", extra: [{ ys: C.baseline_probability, color: css("--muted") }] });
+  const [g, W, H] = setup($("#canstrip")), n = C.minutes, x = (i) => 40 + (i / (n - 1)) * (W - 50);
+  const col = { hold: "rgba(94,110,123,.35)", promote: css("--teal"), rollback: css("--rust") };
+  C.checkpoints.forEach((k) => { g.fillStyle = col[k.decision]; g.fillRect(x(k.minute), 0, Math.max(x(5) - x(0) - 1, 2), H); });
+}
+async function runCanary(ev) {
+  ev.preventDefault(); const btn = $("#canrun"); btn.disabled = true; btn.textContent = "Checking…";
+  try {
+    const late = $("#canlate").checked;
+    C = await api("/v1/canary/simulate", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ candidate_fault: $("#canfault").value, seed: 42, minutes: late ? 300 : 180, fault_start: late ? 120 : 10 }) });
+    const f = C.final, h = $("#canhead"); h.className = "canhead";
+    if (f.decision === "rollback") {
+      h.textContent = `Rolled back after ${f.observed_minutes} minutes of observation`; h.className = "canhead bad";
+      $("#cansub").textContent = f.reasons.join(". ") + `. The rollback of ${f.rollback_container} was ${f.rollback_outcome === "dry_run" ? "recorded in dry-run mode, not executed" : f.rollback_outcome}.`;
+    } else if (f.decision === "promote") {
+      h.textContent = `Promoted after ${f.observed_minutes} minutes of observation`;
+      const fail = C.candidate_unhealthy.indexOf(true);
+      $("#cansub").textContent = f.reasons.join(". ") + "." + (fail >= 0 ? ` The release did fail later in this run, at minute ${fail}: this window was too short to see it. A longer minimum observation period would have caught it.` : "");
+    } else {
+      h.textContent = "Held: not enough evidence yet"; $("#cansub").textContent = f.reasons.join(". ") + ".";
+    }
+    drawCanary();
+  } catch (e) { $("#canhead").textContent = "Could not run the canary check"; $("#cansub").textContent = e.message; }
+  finally { btn.disabled = false; btn.textContent = "Run canary check"; }
 }
 
 function render() {
@@ -186,7 +223,8 @@ async function init() {
   $("#controls").addEventListener("submit", run);
   $("#play").addEventListener("click", play);
   $("#slider").addEventListener("input", (e) => { stop(); cur = +e.target.value; render(); });
-  window.addEventListener("resize", render);
+  $("#canform").addEventListener("submit", runCanary);
+  window.addEventListener("resize", () => { render(); drawCanary(); });
   const chip = $("#model");
   try {
     const m = await api("/v1/model");
@@ -194,6 +232,7 @@ async function init() {
     chip.textContent = `Model ${m.version}, trained on ${m.data_source} data, alerts at ${(m.threshold * 100).toFixed(0)}% risk`;
     $("#sendlive").addEventListener("click", sendLive);
     loadPolicy().catch(() => {}); loadTables(); run();
+    $("#canform").requestSubmit();
   } catch (e) {
     chip.className = "chip bad"; chip.textContent = "No model loaded";
     $("#headline").textContent = "Train a model first";
