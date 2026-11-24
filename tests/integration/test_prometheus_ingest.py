@@ -75,6 +75,15 @@ def test_fetch_window_builds_aligned_complete_frame_and_sanitises_service():
     assert calls == []  # nothing reached Prometheus
 
 
+def test_fetch_window_aligns_query_range_to_stable_step_grid():
+    calls = []
+    client = client_for(healthy, calls=calls)
+    frame = client.fetch_window("home-server", end=T0 + 102.7, steps=10, step_seconds=5)
+    assert len(frame) == 10
+    assert frame["ts"].min() == T0 + 55
+    assert frame["ts"].max() == T0 + 100
+
+
 def test_rows_missing_any_metric_are_dropped():
     def partial(t, m):
         return None if (m == "cpu_pct" and t < T0 + 20) else BASE[m]
