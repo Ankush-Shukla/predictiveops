@@ -23,7 +23,7 @@ HOST_QUERIES: dict[str, str] = {
     "memory_pct": '100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)',
     "disk_io_util_pct": '100 * max(rate(node_disk_io_time_seconds_total[5m]))',
     "network_rx_mbps": (
-        'sum(rate(node_network_receive_bytes_total{device!~"lo|veth.*|docker.*|br-.*"}[5m])) '
+        'sum(rate(node_network_receive_bytes_total{device!~"lo|veth.*|docker.*|br-.*|tailscale.*|tun.*|wg.*"}[5m])) '
         '* 8 / 1e6'
     ),
     "network_tx_mbps": (
@@ -61,7 +61,8 @@ APPLICATION_QUERIES: dict[str, str] = {
         'predictiveops_app_request_duration_seconds_bucket{service="$service"}[5m]))) * 1000'
     ),
     "error_rate": (
-        'sum(rate(predictiveops_app_requests_total{service="$service",status=~"5.."}[5m])) '
+        '(sum(rate(predictiveops_app_requests_total{service="$service",status=~"5.."}[5m])) '
+        'or vector(0)) '
         '/ clamp_min(sum(rate(predictiveops_app_requests_total{service="$service"}[5m])), 1e-9)'
     ),
 }
