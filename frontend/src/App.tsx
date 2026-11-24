@@ -11,11 +11,11 @@ import {
 type AnyRecord = Record<string, any>;
 type Snapshot = {
   health: AnyRecord | null; ready: AnyRecord | null; model: AnyRecord | null;
-  sources: AnyRecord | null; series: AnyRecord[]; alerts: AnyRecord[];
+  sources: AnyRecord | null; series: AnyRecord[]; containers: AnyRecord[]; containerStatus: AnyRecord | null; alerts: AnyRecord[];
   audit: AnyRecord[]; policy: AnyRecord | null;
   errors: string[];
 };
-const empty: Snapshot = { health:null, ready:null, model:null, sources:null, series:[], alerts:[], audit:[], policy:null, errors:[] };
+const empty: Snapshot = { health:null, ready:null, model:null, sources:null, series:[], containers:[], containerStatus:null, alerts:[], audit:[], policy:null, errors:[] };
 const get = async (path: string) => {
   const response = await fetch(path, { headers: { Accept: "application/json" } });
   if (!response.ok) {
@@ -53,7 +53,7 @@ function App() {
     setRefreshing(true);
     const endpoints = [
       ["health", "/health"], ["ready", "/ready"], ["model", "/v1/model"],
-      ["sources", "/v1/sources"], ["series", "/v1/series"], ["alerts", "/v1/alerts?limit=50"],
+      ["sources", "/v1/sources"], ["series", "/v1/series"], ["containerStatus", "/v1/containers"], ["alerts", "/v1/alerts?limit=50"],
       ["audit", "/v1/audit?limit=50"], ["policy", "/v1/policy"],
     ] as const;
     const results = await Promise.all(endpoints.map(async ([key, path]) => {
@@ -108,6 +108,10 @@ function App() {
   const hostModel = scopedModels?.host;
   const applicationModel = scopedModels?.application;
   const serviceCount = data.series.length;
+  const containerRows: AnyRecord[] = data.containerStatus?.containers ?? [];
+  const containerCount = containerRows.length;
+  const containerCpu = containerRows.reduce((sum, row) => sum + (row.cpu_cores ?? 0), 0);
+  const containerMemory = containerRows.reduce((sum, row) => sum + (row.memory_bytes ?? 0), 0);
   const alertCount = data.alerts.length;
   const remediation = data.policy?.config ?? {};
   const chartData = useMemo(() => data.series.map((item, index) => ({
@@ -125,6 +129,7 @@ function App() {
         <nav>
           <button className={page === "Overview" ? "nav-item active" : "nav-item"} onClick={() => activePage("Overview")}><LayoutDashboard size={17}/>Overview</button>
           <button className={page === "Predictions" ? "nav-item active" : "nav-item"} onClick={() => activePage("Predictions")}><Gauge size={17}/>Predictions<span className="nav-count">{serviceCount}</span></button>
+          <button className={page === "Containers" ? "nav-item active" : "nav-item"} onClick={() => activePage("Containers")}><Server size={17}/>Containers<span className="nav-count">{containerCount}</span></button>
           <button className={page === "Alerts & audit" ? "nav-item active" : "nav-item"} onClick={() => activePage("Alerts & audit")}><Bell size={17}/>Alerts & audit<span className="nav-count">{alertCount}</span></button>
         </nav>
         <div className="nav-label monitoring-label">MONITORING</div>
@@ -145,7 +150,7 @@ function App() {
 
         <div className="page-content">
           <div className="page-heading">
-            <div><div className="eyebrow">SYSTEM OVERVIEW <span className="eyebrow-line"/></div><h1>{page}</h1><p>{page === "Overview" ? "Predictive service health, model readiness and operational signals." : page === "Predictions" ? "Current model assessments for monitored service series." : page === "Alerts & audit" ? "Alert history and gated remediation decisions." : "Alert history and gated remediation decisions."}</p></div>
+            <div><div className="eyebrow">SYSTEM OVERVIEW <span className="eyebrow-line"/></div><h1>{page}</h1><p>{page === "Overview" ? "Predictive service health, model readiness and operational signals." : page === "Predictions" ? "Current model assessments for monitored service series." : page === "Alerts & audit" ? "Alert history and gated remediation decisions." : page === "Containers" ? "Live CPU, memory and network usage by Docker container." : "Operational monitoring."}</p></div>
             <div className="updated"><Clock3 size={14}/><span>{lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString()}` : "Waiting for data"}</span></div>
           </div>
 
@@ -192,6 +197,20 @@ function App() {
           </>}
 
           {page === "Predictions" && <section className="panel full-panel"><PanelTitle title="Prediction results" subtitle="Live series state returned by the model API"/><SeriesTable rows={data.series} expanded/></section>}
+          {page === "Containers" && <>
+            <section className="stat-grid container-summary">
+              <StatCard icon={<Server/>} label="RUNNING CONTAINERS" value={String(containerCount)} detail={data.containerStatus?.available ? "Reporting through cAdvisor" : "Waiting for cAdvisor metrics"} tone="blue"/>
+              <StatCard icon={<Cpu/>} label="TOTAL CPU" value={containerCpu.toFixed(2) + " cores"} detail="Aggregate container CPU consumption" tone="green"/>
+              <StatCard icon={<Activity/>} label="MEMORY WORKING SET" value={formatBytes(containerMemory)} detail="Sum of container working sets" tone="amber"/>
+              <StatCard icon={<Zap/>} label="TELEMETRY" value={data.containerStatus?.available ? "Live" : "Unavailable"} detail="Prometheus · cAdvisor · 15s scrape" tone={data.containerStatus?.available ? "green" : "amber"}/>
+            </section>
+            <section className="panel full-panel">
+              <PanelTitle title="Container resource inventory" subtitle="One row per container · refreshed every 10 seconds"/>
+              {data.containerStatus?.error && <div className="notice warning"><AlertTriangle size={16}/><div><b>Container telemetry unavailable</b><span>{data.containerStatus.error}</span></div></div>}
+              <ContainerTable rows={containerRows}/>
+            </section>
+            <section className="container-grafana-link"><span>Historical container trends, filesystem I/O and network charts</span><a href={"http://" + window.location.hostname + ":3000/d/predictiveops/predictiveops"} target="_blank" rel="noreferrer">Open infrastructure dashboard <ExternalLink size={13}/></a></section>
+          </>}
           {page === "Alerts & audit" && <section className="content-grid stacked-panels"><div className="panel"><PanelTitle title="Recent alerts" subtitle="Policy-generated service alerts"/><RecordTable rows={data.alerts} empty="No alert records returned."/></div><div className="panel"><PanelTitle title="Remediation audit" subtitle="Executed, dry-run, blocked and skipped decisions"/><RecordTable rows={data.audit} empty="No remediation decisions recorded."/></div></section>}
 
           <footer className="footer"><span>PredictiveOps <b>·</b> Reliability intelligence</span><span>Refresh interval 10s <b>·</b> {loading ? "Connecting…" : "API snapshot loaded"}</span></footer>
@@ -212,6 +231,17 @@ function EmptyState({icon,title,text}:{icon:React.ReactNode;title:string;text:st
 function SeriesTable({rows,expanded=false}:{rows:AnyRecord[];expanded?:boolean}) {
   if (!rows.length) return <EmptyState icon={<Server/>} title="No monitored series" text="The API has not buffered any metric series yet."/>;
   return <div className="table-scroll"><table><thead><tr><th>SERVICE</th><th>BUFFERED</th><th>POLICY</th><th>RISK / MODEL</th>{expanded && <th>LAST SAMPLE</th>}</tr></thead><tbody>{rows.map((row,i)=>{const risk=riskValue(row);return <tr key={row.series_id ?? i}><td><span className="service-name"><span className="service-dot"/>{row.series_id ?? "Unnamed"}</span></td><td>{row.buffered ?? "—"}</td><td><span className={`status-pill ${row.policy_level === "alert" ? "danger" : row.policy_level === "warn" ? "warning" : "success"}`}>{row.policy_level ?? "none"}</span></td><td>{risk === null ? first(row.prediction ?? {},["label","status"],"Awaiting score") : `${(risk*100).toFixed(1)}%`}</td>{expanded && <td>{time(row.last_timestamp)}</td>}</tr>})}</tbody></table></div>;
+}
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  return (value / Math.pow(1024, index)).toFixed(index > 1 ? 2 : 1) + " " + units[index];
+}
+function formatRate(value: number) { return formatBytes(value) + "/s"; }
+function ContainerTable({rows}:{rows:AnyRecord[]}) {
+  if (!rows.length) return <EmptyState icon={<Server/>} title="No container metrics yet" text="Check cAdvisor health and its Prometheus scrape target. Containers appear when cAdvisor exports resource metrics."/>;
+  return <div className="table-scroll"><table><thead><tr><th>CONTAINER</th><th>COMPOSE SERVICE</th><th>CPU CORES</th><th>MEMORY WORKING SET</th><th>NETWORK RX</th><th>NETWORK TX</th></tr></thead><tbody>{rows.map(row=><tr key={row.name}><td><span className="service-name"><span className="service-dot"/>{row.name}</span></td><td>{row.service ?? "—"}</td><td>{Number(row.cpu_cores ?? 0).toFixed(3)}</td><td>{formatBytes(Number(row.memory_bytes ?? 0))}</td><td>{formatRate(Number(row.network_rx_bytes_s ?? 0))}</td><td>{formatRate(Number(row.network_tx_bytes_s ?? 0))}</td></tr>)}</tbody></table></div>;
 }
 function RecordTable({rows,empty:emptyText}:{rows:AnyRecord[];empty:string}) {
   if (!rows.length) return <EmptyState icon={<CheckCircle2/>} title="Nothing to show" text={emptyText}/>;
