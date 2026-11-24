@@ -22,19 +22,48 @@ HOST_QUERIES: dict[str, str] = {
     "cpu_pct": '100 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100',
     "memory_pct": '100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)',
     "disk_io_util_pct": '100 * max(rate(node_disk_io_time_seconds_total[5m]))',
-    "network_rx_mbps": 'sum(rate(node_network_receive_bytes_total{device!~"lo|veth.*|docker.*|br-.*"}[5m])) * 8 / 1e6',
-    "network_tx_mbps": 'sum(rate(node_network_transmit_bytes_total{device!~"lo|veth.*|docker.*|br-.*"}[5m])) * 8 / 1e6',
+    "network_rx_mbps": (
+        'sum(rate(node_network_receive_bytes_total{device!~"lo|veth.*|docker.*|br-.*"}[5m])) '
+        '* 8 / 1e6'
+    ),
+    "network_tx_mbps": (
+        'sum(rate(node_network_transmit_bytes_total{device!~"lo|veth.*|docker.*|br-.*"}[5m])) '
+        '* 8 / 1e6'
+    ),
 }
 
 APPLICATION_QUERIES: dict[str, str] = {
-    "cpu_pct": '100 * sum(rate(container_cpu_usage_seconds_total{container_label_predictiveops_service="$service",image!=""}[5m])) / scalar(count(node_cpu_seconds_total{mode="idle"}))',
-    "memory_pct": '100 * sum(container_memory_working_set_bytes{container_label_predictiveops_service="$service",image!=""}) / scalar(node_memory_MemTotal_bytes)',
-    "disk_io_util_pct": '100 * max(rate(container_fs_io_time_seconds_total{container_label_predictiveops_service="$service",image!=""}[5m]))',
-    "network_rx_mbps": 'sum(rate(container_network_receive_bytes_total{container_label_predictiveops_service="$service",image!=""}[5m])) * 8 / 1e6',
-    "network_tx_mbps": 'sum(rate(container_network_transmit_bytes_total{container_label_predictiveops_service="$service",image!=""}[5m])) * 8 / 1e6',
+    "cpu_pct": (
+        '100 * sum(rate(container_cpu_usage_seconds_total{'
+        'container_label_predictiveops_service="$service",image!=""}[5m])) '
+        '/ scalar(count(node_cpu_seconds_total{mode="idle"}))'
+    ),
+    "memory_pct": (
+        '100 * sum(container_memory_working_set_bytes{'
+        'container_label_predictiveops_service="$service",image!=""}) '
+        '/ scalar(node_memory_MemTotal_bytes)'
+    ),
+    "disk_io_util_pct": (
+        '100 * max(rate(container_fs_io_time_seconds_total{'
+        'container_label_predictiveops_service="$service",image!=""}[5m]))'
+    ),
+    "network_rx_mbps": (
+        'sum(rate(container_network_receive_bytes_total{'
+        'container_label_predictiveops_service="$service",image!=""}[5m])) * 8 / 1e6'
+    ),
+    "network_tx_mbps": (
+        'sum(rate(container_network_transmit_bytes_total{'
+        'container_label_predictiveops_service="$service",image!=""}[5m])) * 8 / 1e6'
+    ),
     "request_rate_rps": 'sum(rate(predictiveops_app_requests_total{service="$service"}[5m]))',
-    "latency_p95_ms": 'histogram_quantile(0.95, sum by (le) (rate(predictiveops_app_request_duration_seconds_bucket{service="$service"}[5m]))) * 1000',
-    "error_rate": 'sum(rate(predictiveops_app_requests_total{service="$service",status=~"5.."}[5m])) / clamp_min(sum(rate(predictiveops_app_requests_total{service="$service"}[5m])), 1e-9)',
+    "latency_p95_ms": (
+        'histogram_quantile(0.95, sum by (le) (rate('
+        'predictiveops_app_request_duration_seconds_bucket{service="$service"}[5m]))) * 1000'
+    ),
+    "error_rate": (
+        'sum(rate(predictiveops_app_requests_total{service="$service",status=~"5.."}[5m])) '
+        '/ clamp_min(sum(rate(predictiveops_app_requests_total{service="$service"}[5m])), 1e-9)'
+    ),
 }
 
 
