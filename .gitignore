@@ -11,3 +11,7 @@ mlruns/
 artifacts/
 *.sqlite
 *.db
+
+# Production training data contains operational telemetry and incident labels.
+training-data/*
+!training-data/.gitkeep
