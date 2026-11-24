@@ -86,9 +86,18 @@ function App() {
   const modelVersionLabel = modelCount
     ? Object.entries(scopedModels!).map(([scope, model]: [string, any]) => scope + ": " + (model.version ?? "missing")).join(" · ")
     : data.model?.version ? "Version " + data.model.version : "No champion loaded";
-  const sourceCount = prometheus?.scopes
-    ? Object.values(prometheus.scopes).reduce((n: number, scope: any) => n + Object.keys(scope.services ?? {}).length, 0)
-    : Object.keys(prometheus?.services ?? {}).length;
+  const sourceScopes: [string, AnyRecord][] = Object.entries(prometheus?.scopes ?? {});
+  const sourceTargets = sourceScopes.flatMap(([, scope]) => Object.values(scope.services ?? {}) as AnyRecord[]);
+  const healthyTargets = sourceTargets.filter(target => {
+    if (target.error || !target.last_ok) return false;
+    const ageMs = Date.now() - new Date(target.last_ok).getTime();
+    return Number.isFinite(ageMs) && ageMs <= 180000;
+  }).length;
+  const sourceCount = sourceTargets.length || Object.keys(prometheus?.services ?? {}).length;
+  const sourceHealth = !prometheus?.enabled ? "Disabled"
+    : sourceTargets.length > 0 && healthyTargets === sourceTargets.length ? "Healthy" : "Degraded";
+  const hostModel = scopedModels?.host;
+  const applicationModel = scopedModels?.application;
   const serviceCount = data.series.length;
   const alertCount = data.alerts.length;
   const remediation = data.policy?.config ?? {};
@@ -136,10 +145,10 @@ function App() {
 
           {page === "Overview" && <>
             <section className="stat-grid">
-              <StatCard icon={<ShieldCheck/>} label="MODEL STATUS" value={isReady ? "Ready" : "Not ready"} detail={data.model?.version ? `Version ${data.model.version}` : modelCount ? modelCount + " independent prediction scopes" : "Champion model unavailable"} tone={isReady ? "green" : "amber"} />
+              <StatCard icon={<ShieldCheck/>} label="MODEL STATUS" value={isReady ? "Ready" : "Not ready"} detail={modelCount ? `Host ${hostModel ? "loaded" : "missing"} · Applications ${applicationModel ? "loaded" : "missing"}` : "Champion model unavailable"} tone={isReady ? "green" : "amber"} />
               <StatCard icon={<Server/>} label="MONITORED SERIES" value={String(serviceCount)} detail="Active in-memory series" tone="blue"/>
               <StatCard icon={<Bell/>} label="RECENT ALERTS" value={String(alertCount)} detail="Latest 50 records" tone={alertCount ? "amber" : "green"}/>
-              <StatCard icon={<Zap/>} label="PROMETHEUS" value={prometheus?.enabled ? "Connected" : "Disabled"} detail={prometheus?.enabled ? `${sourceCount} configured target(s)` : "Polling is not enabled"} tone={prometheus?.enabled ? "green" : "amber"}/>
+              <StatCard icon={<Zap/>} label="PROMETHEUS" value={sourceHealth} detail={prometheus?.enabled ? `${healthyTargets}/${sourceCount} targets reporting` : "Polling is not enabled"} tone={sourceHealth === "Healthy" ? "green" : "amber"}/>
             </section>
             <section className="content-grid">
               <div className="panel risk-panel">
@@ -150,6 +159,8 @@ function App() {
               <div className="panel model-panel">
                 <PanelTitle title="Model details" subtitle="Independent host and application model metadata"/>
                 <div className="model-version"><div className="model-icon"><Cpu size={20}/></div><div><b>{primaryModel?.model_type ?? (modelCount ? "Scoped prediction models" : "Model unavailable")}</b><span>{modelVersionLabel}</span></div><span className={isReady ? "status-pill success" : "status-pill warning"}>{isReady ? "READY" : "OFFLINE"}</span></div>
+                <Detail label="Host model" value={hostModel ? hostModel.version : "Not loaded"}/>
+                <Detail label="Application model" value={applicationModel ? applicationModel.version : "Not loaded"}/>
                 <Detail label="Decision threshold" value={primaryModel?.threshold !== undefined ? pretty(primaryModel.threshold) : "—"}/>
                 <Detail label="Required history" value={primaryModel?.required_history_minutes ? `${primaryModel.required_history_minutes} minutes` : "—"}/>
                 <Detail label="Feature count" value={primaryModel?.n_features ?? "—"}/>
