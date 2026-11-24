@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import get_settings  # noqa: E402
+from app.core.domain import SCOPE_METRIC_COLUMNS
 from app.core.logging import configure_logging  # noqa: E402
 from data.synthetic.generator import load_dataset  # noqa: E402
 from training.gates import GateConfig  # noqa: E402
@@ -27,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--data", type=Path, default=s.data_dir / "synthetic.csv.gz")
     ap.add_argument("--model-type", choices=MODEL_TYPES, default="hgb")
+    ap.add_argument("--scope", choices=tuple(SCOPE_METRIC_COLUMNS), default="combined")
     ap.add_argument("--horizon", type=int, default=s.horizon_minutes)
     ap.add_argument("--seed", type=int, default=s.synthetic_seed)
     ap.add_argument("--model-root", type=Path, default=s.model_dir)
@@ -40,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
 
     configure_logging(s.log_level, s.log_json)
     cfg = TrainConfig(
-        model_type=a.model_type, horizon_minutes=a.horizon, seed=a.seed,
+        model_type=a.model_type, scope=a.scope, horizon_minutes=a.horizon, seed=a.seed,
         max_fpr_for_threshold=a.max_fpr, gates=GateConfig(min_f1=a.min_f1, max_fpr=a.max_fpr),
         model_root=a.model_root, use_mlflow=not a.no_mlflow, tracking_uri=s.mlflow_tracking_uri,
         experiment=s.mlflow_experiment, registered_model_name=s.mlflow_model_name,
@@ -55,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         "test_ml": slim(r["test"]), "test_baseline_default": slim(r["baseline_default"]),
         "test_baseline_tuned": slim(r["baseline_tuned"]), "event": slim(r["event"]),
         "calibration": r["calibration"], "mlflow": res.mlflow}, indent=2, default=str))
-    print("NOTE: metrics are on a held-out chronological split of SYNTHETIC data.")
+    print(f"NOTE: evaluation data source: {res.bundle.metadata.get('data_source', 'unknown')}.")
     return 2 if (a.enforce_gates and not r["gates"]["passed"]) else 0
 
 
