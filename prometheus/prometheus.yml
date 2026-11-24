@@ -1,8 +1,7 @@
 global:
-  # Accelerated demo: the demo target advances one simulated minute every 5 s and the API samples
-  # Prometheus every 5 s. Scraping faster than that (2 s) means each 5 s step sees a fresh value.
-  scrape_interval: 2s
-  evaluation_interval: 5s
+  # Production scrape cadence. The model ingestion path samples complete one-minute windows.
+  scrape_interval: 15s
+  evaluation_interval: 15s
 
 rule_files:
   - /etc/prometheus/alert_rules.yml
