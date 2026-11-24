@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from app.core.domain import METRIC_COLUMNS
 from app.core.exceptions import DataValidationError
 from app.models.bundle import ModelBundle
 from app.models.registry import load_champion
@@ -17,6 +18,7 @@ class Predictor:
         self.bundle = bundle
         self.version = version
         self._builder = bundle.feature_builder()
+        self.metric_columns = tuple(bundle.schema.config.get("metrics", METRIC_COLUMNS))
 
     @classmethod
     def from_champion(cls, model_root: Path) -> Predictor:
@@ -44,7 +46,7 @@ class Predictor:
 
     def predict_recent(self, window: pd.DataFrame, n: int) -> list[PredictionResult]:
         """Score the last ``n`` samples (those with complete features) of ONE contiguous series."""
-        validate_metrics_frame(window, require_series_id=False)
+        validate_metrics_frame(window, require_series_id=False, metrics=self.metric_columns)
         window = window.sort_values("timestamp").reset_index(drop=True)
         feats = self._builder.transform(window)
         idx = feats.index[feats.notna().all(axis=1)][-max(n, 0):] if n > 0 else feats.index[:0]
