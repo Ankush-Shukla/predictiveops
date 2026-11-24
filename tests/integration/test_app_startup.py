@@ -74,8 +74,12 @@ def test_production_readiness_requires_both_scope_models(model_dir, tmp_path):
                         sqlite_path=tmp_path / "production.sqlite")
     app = create_app(settings, None, load_model=False)
     with TestClient(app) as client:
-        assert "/v1/simulate" not in app.openapi()["paths"]
-        assert "/v1/canary/evaluate" not in app.openapi()["paths"]
+        production_paths = app.openapi()["paths"]
+        assert "/v1/simulate" not in production_paths
+        assert "/v1/canary/evaluate" not in production_paths
+        assert "/v1/predict" not in production_paths
+        assert "/v1/metrics/ingest" not in production_paths
+        assert "/v1/series" in production_paths
         blocked = client.get("/ready")
         assert blocked.status_code == 503 and blocked.json()["scope"] == "host"
         app.state.api.set_scope_predictors({
