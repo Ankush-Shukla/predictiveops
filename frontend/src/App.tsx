@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, Bell, CheckCircle2,
   ChevronRight, CircleHelp, Clock3, Cpu, ExternalLink, Gauge, LayoutDashboard,
@@ -98,7 +98,7 @@ function App() {
           <button className={page === "Canary" ? "nav-item active" : "nav-item"} onClick={() => activePage("Canary")}><Workflow size={17}/>Canary releases</button>
         </nav>
         <div className="nav-label monitoring-label">MONITORING</div>
-        <a className="nav-item link-item" href="http://localhost:3000" target="_blank" rel="noreferrer"><Activity size={17}/>Grafana <ExternalLink size={13}/></a>
+        <a className="nav-item link-item" href={`http://${window.location.hostname}:3000`} target="_blank" rel="noreferrer"><Activity size={17}/>Grafana <ExternalLink size={13}/></a>
         <a className="nav-item link-item" href="/docs" target="_blank" rel="noreferrer"><CircleHelp size={17}/>API reference <ExternalLink size={13}/></a>
         <div className="sidebar-bottom"><div className="secure-line"><ShieldCheck size={15}/>Private deployment</div><span>PredictiveOps · v0.8</span></div>
       </aside>
@@ -169,7 +169,7 @@ function App() {
   );
 }
 
-function StatCard({icon,label,value,detail,tone}:{icon:React.ReactNode;label:string;value:string;detail:string;tone:string}) {
+function StatCard({icon,label,value,detail,tone}:{icon:ReactNode;label:string;value:string;detail:string;tone:string}) {
   return <div className="stat-card"><div className={`stat-icon ${tone}`}>{icon}</div><div className="stat-label">{label}</div><div className="stat-value">{value}</div><div className="stat-detail">{detail}</div></div>;
 }
 function PanelTitle({title,subtitle,action}:{title:string;subtitle:string;action?:string}) {
