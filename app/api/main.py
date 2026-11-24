@@ -121,6 +121,7 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
     app.include_router(predict.router)
     app.include_router(policy.router)
     if settings.env != "production":
+        app.include_router(predict.development_router)
         app.include_router(canary.router)
         app.include_router(simulate.router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
