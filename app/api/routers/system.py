@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request, Response
+
+import httpx
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
@@ -91,6 +93,40 @@ def sources(request: Request) -> dict:
         return {"prometheus": {"enabled": False}}
     return {"prometheus": {"enabled": True, "step_seconds": poller.step, "services": poller.status}}
 
+
+@router.get("/v1/containers", tags=["monitoring"])
+def containers(state: ApiState = Depends(get_state)) -> dict:
+    """Return one live resource snapshot per Docker container from cAdvisor."""
+    base_url = state.settings.prometheus_url.rstrip("/")
+    expressions = {
+        "cpu_cores": 'sum by (name) (rate(container_cpu_usage_seconds_total{image!="",name!=""}[5m]))',
+        "memory_bytes": 'sum by (name) (container_memory_working_set_bytes{image!="",name!=""})',
+        "network_rx_bytes_s": 'sum by (name) (rate(container_network_receive_bytes_total{image!="",name!=""}[5m]))',
+        "network_tx_bytes_s": 'sum by (name) (rate(container_network_transmit_bytes_total{image!="",name!=""}[5m]))',
+    }
+    rows: dict[str, dict] = {}
+    try:
+        with httpx.Client(base_url=base_url, timeout=3.0) as client:
+            for metric, expression in expressions.items():
+                response = client.get("/api/v1/query", params={"query": expression})
+                response.raise_for_status()
+                payload = response.json()
+                if payload.get("status") != "success":
+                    raise ValueError("Prometheus returned an unsuccessful query")
+                for sample in payload.get("data", {}).get("result", []):
+                    labels = sample.get("metric", {})
+                    name = labels.get("name")
+                    if not name:
+                        continue
+                    row = rows.setdefault(name, {
+                        "name": name,
+                        "service": labels.get("container_label_com_docker_compose_service", "—"),
+                    })
+                    row[metric] = float(sample["value"][1])
+                    row["timestamp"] = float(sample["value"][0])
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        return {"available": False, "containers": [], "error": str(exc)}
+    return {"available": bool(rows), "containers": sorted(rows.values(), key=lambda item: item["name"].lower()), "count": len(rows)}
 
 @router.get("/metrics", tags=["system"], include_in_schema=False)
 def metrics(state: ApiState = Depends(get_state)) -> Response:
