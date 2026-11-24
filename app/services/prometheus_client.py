@@ -8,7 +8,7 @@ from datetime import datetime
 import httpx
 import pandas as pd
 
-from app.core.domain import APPLICATION_METRIC_COLUMNS, HOST_METRIC_COLUMNS, METRIC_COLUMNS
+from app.core.domain import METRIC_COLUMNS
 from app.core.exceptions import PredictiveOpsError
 
 SERVICE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
