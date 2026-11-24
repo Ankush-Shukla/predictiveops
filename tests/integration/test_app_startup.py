@@ -21,8 +21,14 @@ from training.train import TrainConfig, run_training
 def model_dir(tmp_path_factory):
     root = tmp_path_factory.mktemp("models")
     df = generate_dataset(GeneratorConfig(days=8, n_series=3, seed=21))
-    run_training(df, TrainConfig(model_type="logreg", model_root=root, use_mlflow=False, promote=True,
-                                 max_fpr_for_threshold=0.2, gates=GateConfig(min_f1=0.0,must_beat_baseline_pr_auc=False)))
+    run_training(
+        df,
+        TrainConfig(
+            model_type="logreg", model_root=root, use_mlflow=False, promote=True,
+            max_fpr_for_threshold=0.2,
+            gates=GateConfig(min_f1=0.0, must_beat_baseline_pr_auc=False),
+        ),
+    )
     return root
 
 
