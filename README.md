@@ -230,16 +230,26 @@ artifact only if everything passes (optional remote MLflow registration through 
 
 ## Verification status
 
-| Verified (executed) | Not executed |
-|---|---|
-| Full test suite (160+ tests, 99 % coverage), clean-venv run, runtime-only venv | `docker build` / `docker compose up` / pulling pinned images |
-| Live end-to-end on native processes: real Prometheus 3.5.0 + node_exporter + demo target + API poller | Grafana rendering the provisioned dashboard (its PromQL was executed) |
-| Browser tests of the dashboard (Playwright/Chromium) | GitHub Actions runs |
-| `promtool`, `hadolint`, workflow and compose schema checks | Real container restart or canary stop through Docker |
+This production-hardening branch has not yet been released or deployed. GitHub Actions validation
+is being run against the latest commits; the full CI result must be green before deployment.
+The existing prototype's prior tests and native-process checks do not validate the new dual-scope
+production stack. Docker Compose deployment, Grafana rendering, real host polling, and real
+application instrumentation still require an end-to-end run on the target server.
 
-## Known limitations
+## Known release blockers
 
-* Synthetic data only; no evidence on real systems. Metrics come from the project's own simulator.
+- Real, reviewed, labelled host and application datasets have not yet been supplied. Production
+  readiness deliberately remains HTTP 503 until both models are trained from non-synthetic data
+  and pass their evaluation gates.
+- Each application must expose the documented request counter and latency histogram, and its
+  container must carry the `predictiveops.service` label. Uninstrumented applications are not
+  eligible for application-level inference.
+- The current prediction buffers are process-local and are rebuilt from Prometheus history after
+  restart. Keep Prometheus retention longer than the poller's lookback window.
+- No Alertmanager, Kubernetes integration, or multi-service dependency modelling is included.
+- Live remediation remains disabled and dry-run by default; do not enable it without a separate
+  security review and disposable-target test.
+
 * Unseen fault mechanisms are missed by the model (held-out: memory leak 2/97, error ramp 2/103 events); thresholds catch them.
 * The canary decides once, after its minimum observation period; later regressions are promoted.
 * The model does not consume Node Exporter metrics; real data requires new queries and retraining.
