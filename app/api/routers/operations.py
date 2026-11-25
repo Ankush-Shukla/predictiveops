@@ -323,7 +323,7 @@ def _run_stress(path: Path, run_id: str, max_users: int, duration: int):
                 for active_index, active in enumerate(workers, start=1):
                     active.reload()
                     if active.status != "running":
-                        failure = f"Virtual user {active_index} exited ({active.status})"
+                        failure = f"Virtual user {active_index} exited ({active.status}, exit code {active.attrs.get('State', {}).get('ExitCode', 'unknown')})"
                         status = "capacity_reached"
                         _capture_incident(path, active.id, "stress_failure")
                         break
