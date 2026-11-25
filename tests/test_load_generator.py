@@ -1,6 +1,6 @@
 # ruff: noqa: E501, E701, E702, E401, I001
 import pytest
-from pydantic import ValidationError
+from pydantic import ValidationError\nfrom fastapi import HTTPException
 from app.services.load_generator import LoadJob, verify_internal_token
 
 def test_accepts_private_docker_ipv4():
@@ -22,5 +22,5 @@ def test_enforces_resource_bounds():
 def test_internal_token_is_required(monkeypatch):
     monkeypatch.setenv("PREDICTIVEOPS_LOAD_GENERATOR_TOKEN", "expected-secret")
     verify_internal_token("expected-secret")
-    with pytest.raises(Exception):
+    with pytest.raises(HTTPException):
         verify_internal_token("wrong-secret")
