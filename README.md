@@ -145,6 +145,7 @@ live remediation until its target allowlist and action path have been reviewed.
 | `GET /health`, `GET /ready` | Liveness and readiness; production requires both qualified scope models |
 | `GET /v1/model` | Model metadata; production returns separate host and application models |
 | `GET /v1/sources` | Prometheus source and per-scope poller status |
+| `GET /v1/live-forecast` | Live 15/30-minute host resource guardrail forecast from Node Exporter telemetry |
 | `GET /v1/series[/{id}]` | Buffered time series and latest prediction state |
 | `GET /v1/alerts`, `GET /v1/audit`, `GET /v1/policy` | Alert history, audit log and policy state |
 | `GET /metrics` | PredictiveOps Prometheus instrumentation |

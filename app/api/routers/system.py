@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from datetime import UTC, datetime
 
 import httpx
 from fastapi import APIRouter, Depends, Request, Response
@@ -12,6 +13,7 @@ from app.api.deps import get_state, production_model_block_reason
 from app.api.state import ApiState
 from app.core.exceptions import ModelNotReadyError
 from app.models.predictor import Predictor
+from app.services.live_forecast import forecast_host_metrics
 
 router = APIRouter()
 
@@ -94,6 +96,60 @@ def sources(request: Request) -> dict:
     if poller is None:
         return {"prometheus": {"enabled": False}}
     return {"prometheus": {"enabled": True, "step_seconds": poller.step, "services": poller.status}}
+
+
+@router.get("/v1/live-forecast", tags=["predictions"])
+def live_host_forecast(request: Request, state: ApiState = Depends(get_state)) -> dict:
+    """Forecast host resource guardrail crossings from the actual live telemetry buffer."""
+    host_id = state.settings.prometheus_host_series_id
+    candidates = (f"host:{host_id}", host_id)
+    with state.lock:
+        series_id = next((key for key in candidates if key in state.buffers), None)
+        if series_id is None:
+            frame = None
+        else:
+            frame = state.buffers[series_id].frame()
+
+    pollers = getattr(request.app.state, "pollers", {})
+    poller = pollers.get("host") if isinstance(pollers, dict) else None
+    poller = poller or getattr(request.app.state, "poller", None)
+    target_status = poller.status.get(host_id, {}) if poller is not None else {}
+    last_ok = target_status.get("last_ok")
+    source_error = target_status.get("error")
+    source_age = None
+    if last_ok:
+        try:
+            parsed = datetime.fromisoformat(str(last_ok).replace("Z", "+00:00"))
+            source_age = max(0.0, (datetime.now(UTC) - parsed).total_seconds())
+        except ValueError:
+            source_age = None
+
+    if frame is None:
+        result = {
+            "status": "warming_up",
+            "series_id": f"host:{host_id}",
+            "samples_available": 0,
+            "required_history": 30,
+            "horizon_minutes": 30,
+            "metrics": [],
+            "message": "Waiting for the first complete host telemetry poll.",
+        }
+    else:
+        result = forecast_host_metrics(frame, series_id=series_id)
+
+    result.update({
+        "source": "prometheus_node_exporter",
+        "source_status": (
+            "unavailable" if poller is None
+            else "stale" if source_age is None or source_age > 180
+            else "degraded" if source_error
+            else "healthy"
+        ),
+        "source_last_ok": last_ok,
+        "source_age_seconds": round(source_age, 1) if source_age is not None else None,
+        "source_error": source_error,
+    })
+    return result
 
 
 @router.get("/v1/containers", tags=["monitoring"])

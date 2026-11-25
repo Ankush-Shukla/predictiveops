@@ -12,11 +12,12 @@ import {
 type AnyRecord = Record<string, any>;
 type Snapshot = {
   health: AnyRecord | null; ready: AnyRecord | null; model: AnyRecord | null;
+  liveForecast: AnyRecord | null;
   sources: AnyRecord | null; series: AnyRecord[]; containers: AnyRecord[]; containerStatus: AnyRecord | null; alerts: AnyRecord[];
   audit: AnyRecord[]; policy: AnyRecord | null;
   errors: string[];
 };
-const empty: Snapshot = { health:null, ready:null, model:null, sources:null, series:[], containers:[], containerStatus:null, alerts:[], audit:[], policy:null, errors:[] };
+const empty: Snapshot = { health:null, ready:null, model:null, liveForecast:null, sources:null, series:[], containers:[], containerStatus:null, alerts:[], audit:[], policy:null, errors:[] };
 const get = async (path: string) => {
   const response = await fetch(path, { headers: { Accept: "application/json" } });
   if (!response.ok) {
@@ -112,7 +113,7 @@ function App() {
     setRefreshing(true);
     const endpoints = [
       ["health", "/health"], ["ready", "/ready"], ["model", "/v1/model"],
-      ["sources", "/v1/sources"], ["series", "/v1/series"], ["containerStatus", "/v1/containers"], ["alerts", "/v1/alerts?limit=50"],
+      ["liveForecast", "/v1/live-forecast"], ["sources", "/v1/sources"], ["series", "/v1/series"], ["containerStatus", "/v1/containers"], ["alerts", "/v1/alerts?limit=50"],
       ["audit", "/v1/audit?limit=50"], ["policy", "/v1/policy"],
     ] as const;
     const results = await Promise.all(endpoints.map(async ([key, path]) => {
@@ -269,6 +270,7 @@ function App() {
               <PanelTitle title="Infrastructure alerts" subtitle="Pending and firing Prometheus alerts, including the static-threshold safety net"/>
               <InfraAlerts data={infraAlerts}/>
             </section>
+            <LiveForecastPanel forecast={data.liveForecast}/>
             <section className="content-grid">
               <div className="panel risk-panel">
                 <PanelTitle
@@ -331,6 +333,7 @@ function App() {
           </>}
 
           {page === "Predictions" && <>
+            <LiveForecastPanel forecast={data.liveForecast}/>
             <section className="panel full-panel">
               <PanelTitle
                 title="Predictive failure simulation"
@@ -519,6 +522,72 @@ function InfraAlerts({ data }: { data: AnyRecord | null }) {
     <tr key={`${row.name}-${i}`}><td><span className="service-name">{row.name}</span></td><td><span className={`status-pill ${row.state === "firing" ? "danger" : "warning"}`}>{row.state}</span></td><td>{row.severity}</td><td>{row.scope ?? "—"}</td><td>{row.summary || "—"}</td><td>{time(row.active_at)}</td></tr>
   ))}</tbody></table></div>;
 }
+
+function LiveForecastPanel({ forecast }: { forecast: AnyRecord | null }) {
+  const metrics: AnyRecord[] = Array.isArray(forecast?.metrics) ? forecast.metrics : [];
+  const sourceStatus = forecast?.source_status ?? "waiting";
+  const status = forecast?.status ?? "warming_up";
+  const statusClass = status === "critical" ? "danger" : status === "warning" ? "warning" : status === "normal" ? "success" : "muted";
+  const sourceClass = sourceStatus === "healthy" ? "success" : sourceStatus === "degraded" ? "warning" : "danger";
+  return (
+    <section className="panel full-panel">
+      <PanelTitle
+        title="Live host resource forecast"
+        subtitle="30-minute trend forecast from your actual Node Exporter telemetry"
+      />
+      <div className="notice warning">
+        <Activity size={16}/>
+        <div>
+          <b>LIVE TELEMETRY · RESOURCE CAPACITY FORECAST</b>
+          <span>This is a trend-based forecast of CPU, memory and disk-I/O guardrail crossings. The pressure index is not a failure probability and does not use the synthetic demo model.</span>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:15}}>
+        <span className={`status-pill ${statusClass}`}>{status.replace(/_/g," ").toUpperCase()}</span>
+        <span className={`status-pill ${sourceClass}`}>SOURCE {String(sourceStatus).toUpperCase()}</span>
+        <span style={{fontSize:10,color:"#8794a7"}}>
+          {forecast?.samples_available ?? 0}/{forecast?.required_history ?? 30} samples available
+        </span>
+        {forecast?.source_age_seconds != null && <span style={{fontSize:10,color:"#8794a7"}}>Last scrape {Math.round(forecast.source_age_seconds)}s ago</span>}
+      </div>
+      {metrics.length ? (
+        <div className="table-scroll">
+          <table>
+            <thead><tr>
+              <th>RESOURCE</th><th>CURRENT</th><th>15-MIN FORECAST</th><th>30-MIN FORECAST</th>
+              <th>TREND</th><th>TIME TO WARNING</th><th>STATUS</th>
+            </tr></thead>
+            <tbody>
+              {metrics.map(metric => (
+                <tr key={metric.metric}>
+                  <td><b>{metric.label}</b></td>
+                  <td>{Number(metric.current).toFixed(1)}%</td>
+                  <td>{Number(metric.forecast_15m).toFixed(1)}%</td>
+                  <td>{Number(metric.forecast_30m).toFixed(1)}%</td>
+                  <td>{metric.trend} ({Number(metric.slope_per_minute) > 0 ? "+" : ""}{Number(metric.slope_per_minute).toFixed(3)}/min)</td>
+                  <td>{metric.minutes_to_warning == null ? "Not projected" : metric.minutes_to_warning === 0 ? "Already breached" : `${metric.minutes_to_warning} min`}</td>
+                  <td><span className={`status-pill ${metric.status === "critical" ? "danger" : metric.status === "warning" ? "warning" : "success"}`}>{metric.status}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <EmptyState
+          icon={<Activity/>}
+          title={sourceStatus === "stale" ? "Host telemetry is stale" : "Building live forecast history"}
+          text={forecast?.message ?? "Waiting for Prometheus to collect 30 contiguous one-minute host samples."}
+        />
+      )}
+      <div className="model-note">
+        <ShieldCheck size={15}/>
+        <span>{forecast?.message ?? "Forecast will appear after the host telemetry buffer has 30 contiguous samples."} Guardrails: warning at 85%, critical at 95%. No remediation is triggered.</span>
+      </div>
+      {forecast?.source_error && <div className="notice warning" style={{marginTop:12}}><AlertTriangle size={15}/><div><b>Prometheus poll warning</b><span>{forecast.source_error}</span></div></div>}
+    </section>
+  );
+}
+
 function StatCard({icon,label,value,detail,tone}:{icon:ReactNode;label:string;value:string;detail:string;tone:string}) {
   return <div className="stat-card"><div className={`stat-icon ${tone}`}>{icon}</div><div className="stat-label">{label}</div><div className="stat-value">{value}</div><div className="stat-detail">{detail}</div></div>;
 }
