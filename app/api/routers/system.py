@@ -113,6 +113,11 @@ def experimental_host_prediction(state: ApiState = Depends(get_state)) -> dict:
                 "buffered_samples": buffered, "required_history_minutes": predictor.required_history}
     latest = scored[-1]
     state.collectors.predictions.labels(source="experimental_host").inc()
+    gates = predictor.bundle.metadata.get("evaluation", {}).get("gates", {})
+    disclaimer = (
+        "EXPERIMENTAL: trained on synthetic host-fault scenarios and applied to live host metrics. "
+        "Not production-qualified; no alerts or remediation are triggered."
+    )
     return {
         "status": "scored", "scope": "host", "series_id": series_id,
         "model_version": latest.model_version, "data_source": "synthetic",
@@ -122,9 +127,9 @@ def experimental_host_prediction(state: ApiState = Depends(get_state)) -> dict:
         "buffered_samples": buffered, "required_history_minutes": predictor.required_history,
         "history": [{"as_of": item.as_of, "probability": item.probability} for item in scored],
         "metrics": {name: float(frame.iloc[-1][name]) for name in predictor.metric_columns},
-        "quality_gates_passed": (predictor.bundle.metadata.get("evaluation", {}).get("gates", {}).get("passed") is True),
+        "quality_gates_passed": gates.get("passed") is True,
         "evaluation": predictor.bundle.metadata.get("evaluation", {}),
-        "disclaimer": "EXPERIMENTAL: trained on synthetic host-fault scenarios and applied to live host metrics. Not production-qualified; no alerts or remediation are triggered.",
+        "disclaimer": disclaimer,
     }
 
 
