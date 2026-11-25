@@ -48,7 +48,7 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
                             extra={"scope": scope, "version": loaded[scope].version},
                         )
                     except PredictiveOpsError as exc:
-                        log.warning("scope model unavailable", extra={"scope": scope, "reason": str(exc)})
+                        log.info("scope model unavailable", extra={"scope": scope, "reason": str(exc)})
                 app.state.api.set_scope_predictors(loaded)
 
                 # Isolated model used exclusively by the explicitly labelled demo endpoint.
@@ -63,7 +63,7 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
                     else:
                         log.warning("root model rejected for demo: unexpected provenance or scope")
                 except PredictiveOpsError as exc:
-                    log.warning("synthetic demonstration model unavailable",
+                    log.info("synthetic demonstration model unavailable",
                                 extra={"reason": str(exc)})
 
                 # Separate experimental model. Never register it as a production scope.
@@ -89,7 +89,7 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
                             "experimental host model rejected: unexpected scope or provenance"
                         )
                 except PredictiveOpsError as exc:
-                    log.warning(
+                    log.info(
                         "experimental host model unavailable",
                         extra={"reason": str(exc)},
                     )
@@ -99,7 +99,7 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
                     app.state.api.set_predictor(Predictor.from_champion(settings.model_dir))
                     log.info("champion model loaded", extra={"version": app.state.api.predictor.version})
                 except PredictiveOpsError as exc:
-                    log.warning("no champion model loaded", extra={"reason": str(exc)})
+                    log.info("no champion model loaded", extra={"reason": str(exc)})
 
         pollers: list[PrometheusPoller] = []
         if settings.prometheus_enabled:

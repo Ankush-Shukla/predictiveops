@@ -58,42 +58,114 @@ def _project_container(container):
     return container.labels.get("com.docker.compose.project") == PROJECT
 
 
-def _capture_incident(path: Path, container_id: str, event: str = "die") -> None:
+def _capture_incident(
+    path: Path, container_id: str, event: str = "die",
+    event_data: dict | None = None,
+) -> None:
     try:
-        client = _client()
-        container = client.containers.get(container_id)
+        container = _client().containers.get(container_id)
         if not _project_container(container):
             return
         container.reload()
         labels = container.labels
         if labels.get("predictiveops.role") == "stress" and event != "stress_failure":
             return
+
         state = container.attrs.get("State", {})
-        if (
-            event in {"die", "oom"}
-            and state.get("ExitCode") == 0
-            and not state.get("OOMKilled")
-            and not state.get("Error")
-        ):
+        actor = (event_data or {}).get("Actor", {})
+        attributes = actor.get("Attributes", {})
+        exit_code = state.get("ExitCode")
+        if attributes.get("exitCode") is not None:
+            try:
+                event_exit_code = int(attributes["exitCode"])
+                if event_exit_code != 0 or exit_code in (None, 0):
+                    exit_code = event_exit_code
+            except (TypeError, ValueError):
+                pass
+        oom_killed = bool(state.get("OOMKilled") or event == "oom")
+        error = state.get("Error") or attributes.get("error") or ""
+        if event in {"die", "oom"} and exit_code == 0 and not oom_killed and not error:
             return
-        finished = state.get("FinishedAt") or datetime.now(UTC).isoformat()
-        name = container.name
+
+        finished = state.get("FinishedAt")
+        if not finished or finished.startswith("0001-"):
+            event_payload = event_data or {}
+            if event_payload.get("timeNano"):
+                event_timestamp = float(event_payload["timeNano"]) / 1_000_000_000
+            else:
+                event_timestamp = (
+                    float(event_payload["time"]) if event_payload.get("time") else None
+                )
+            finished = (
+                datetime.fromtimestamp(event_timestamp, UTC).isoformat()
+                if event_timestamp else datetime.now(UTC).isoformat()
+            )
+        started = state.get("StartedAt")
+        runtime_seconds = None
+        if (started and finished and not started.startswith("0001-")
+                and not finished.startswith("0001-")):
+            try:
+                finished_dt = datetime.fromisoformat(finished.replace("Z", "+00:00"))
+                started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                runtime_seconds = max(0.0, (finished_dt - started_dt).total_seconds())
+            except ValueError:
+                pass
+
+        name = container.name or attributes.get("name") or container_id[:12]
         service = labels.get("com.docker.compose.service")
-        logs = container.logs(tail=250, timestamps=True).decode("utf-8", errors="replace")
+        try:
+            output = container.logs(
+                tail=250, timestamps=True, stdout=True, stderr=True
+            )
+            logs = output.decode("utf-8", errors="replace").strip()
+        except (DockerException, OSError) as exc:
+            logs = f"Container logs could not be read after exit: {exc}"
+        if not logs:
+            logs = (
+                "Docker retained no stdout/stderr lines for this incident. Use exit code, "
+                "OOM state, Docker error and container metadata below for diagnosis."
+            )
+
+        if oom_killed or exit_code == 137:
+            diagnosis = (
+                "The container was terminated by the kernel or Docker due to memory "
+                "pressure (OOM/SIGKILL)."
+            )
+        elif error:
+            diagnosis = f"Docker reported a runtime error: {error}"
+        elif exit_code not in (None, 0):
+            diagnosis = f"The container process exited unsuccessfully with exit code {exit_code}."
+        elif event == "stress_failure":
+            diagnosis = (
+                "A stress-test worker exited before the test completed; this marks "
+                "the measured capacity boundary."
+            )
+        else:
+            diagnosis = (
+                "Docker reported a container termination. Review the captured "
+                "logs and state metadata."
+            )
+
+        config = container.attrs.get("Config", {})
         report = {
             "incident_id": f"{container.id[:12]}-{finished}",
             "container_id": container.id,
             "container_name": name,
             "compose_service": service,
+            "image": config.get("Image") or attributes.get("image"),
             "event": event,
             "status": state.get("Status"),
-            "exit_code": state.get("ExitCode"),
-            "oom_killed": bool(state.get("OOMKilled")),
-            "error": state.get("Error") or "",
-            "started_at": state.get("StartedAt"),
+            "exit_code": exit_code,
+            "oom_killed": oom_killed,
+            "error": error,
+            "diagnosis": diagnosis,
+            "started_at": started,
             "finished_at": finished,
+            "runtime_seconds": round(runtime_seconds, 2) if runtime_seconds is not None else None,
+            "restart_count": container.attrs.get("RestartCount", 0),
             "captured_at": datetime.now(UTC).isoformat(),
             "logs_tail": logs,
+            "docker_event": attributes,
         }
         with _connect(path) as db:
             db.execute("""INSERT OR IGNORE INTO incidents
@@ -101,12 +173,10 @@ def _capture_incident(path: Path, container_id: str, event: str = "die") -> None
                  started_at,finished_at,captured_at,logs,report)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (report["incident_id"], report["container_id"], name, service, event,
-                 report["exit_code"], int(report["oom_killed"]), report["error"],
-                 report["started_at"], finished, report["captured_at"], logs,
-                 json.dumps(report)))
+                 exit_code, int(oom_killed), error, started, finished,
+                 report["captured_at"], logs, json.dumps(report)))
     except (DockerException, NotFound, OSError, sqlite3.Error) as exc:
         log.warning("incident capture failed for %s: %s", container_id[:12], exc)
-
 
 def start_event_watcher(path: Path) -> None:
     key = str(path)
@@ -127,7 +197,7 @@ def start_event_watcher(path: Path) -> None:
                     actor = event.get("Actor", {}).get("ID")
                     action = event.get("Action", event.get("status", "die"))
                     if actor:
-                        _capture_incident(path, actor, action)
+                        _capture_incident(path, actor, action, event)
             except DockerException as exc:
                 log.warning("Docker event stream unavailable: %s", exc)
                 stop.wait(5)
@@ -209,7 +279,9 @@ def container_action(container_id: str, action: str):
 def container_logs(container_id: str, tail: int = 250, since: int = 0):
     _, container = _find_container(container_id)
     try:
-        output = container.logs(tail=max(1, min(tail, 2000)), since=max(0, since),
+        # Docker SDK rejects integer zero for since; None means no time filter.
+        output = container.logs(tail=max(1, min(tail, 2000)),
+                                since=since if since > 0 else None,
                                 timestamps=True, stdout=True, stderr=True)
         return {"container": container.name, "logs": output.decode("utf-8", errors="replace")}
     except DockerException as exc:
@@ -273,7 +345,11 @@ def _run_stress(path: Path, run_id: str, max_users: int, duration: int):
                 for active_index, active in enumerate(workers, start=1):
                     active.reload()
                     if active.status != "running":
-                        failure = f"Virtual user {active_index} exited ({active.status})"
+                        exit_code = active.attrs.get("State", {}).get("ExitCode", "unknown")
+                        failure = (
+                            f"Virtual user {active_index} exited ({active.status}, "
+                            f"exit code {exit_code})"
+                        )
                         status = "capacity_reached"
                         _capture_incident(path, active.id, "stress_failure")
                         break

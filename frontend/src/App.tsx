@@ -51,10 +51,8 @@ function App() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [page, setPage] = useState("Overview");
   const [refreshing, setRefreshing] = useState(false);
-  const [faultType, setFaultType] = useState("memory_leak");
-  const [simulation, setSimulation] = useState<AnyRecord | null>(null);
-  const [simulationLoading, setSimulationLoading] = useState(false);
-  const [simulationError, setSimulationError] = useState<string | null>(null);
+  const [stressMaxUsers, setStressMaxUsers] = useState(5);
+  const [stressDuration, setStressDuration] = useState(30);
   const [rangeMinutes, setRangeMinutes] = useState(60);
   const [history, setHistory] = useState<AnyRecord | null>(null);
   const [infraAlerts, setInfraAlerts] = useState<AnyRecord | null>(null);
@@ -146,7 +144,7 @@ function App() {
     try {
       const response = await fetch("/v1/ops/stress", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ max_users: 10, duration_seconds: 30 })
+        body: JSON.stringify({ max_users: stressMaxUsers, duration_seconds: stressDuration })
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body?.detail ?? "Could not start stress test");
@@ -154,40 +152,12 @@ function App() {
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error));
     } finally { setStressBusy(false); }
-  }, []);
+  }, [stressMaxUsers, stressDuration]);
 
   const historyData = useMemo(
     () => (history?.points ?? []).map((point: AnyRecord) => ({ ...point, time: point.t * 1000 })),
     [history],
   );
-
-  const runSimulation = useCallback(async () => {
-    setSimulationLoading(true);
-    setSimulationError(null);
-    try {
-      const response = await fetch("/v1/simulate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({
-          fault_type: faultType,
-          minutes: 360,
-          fault_start: 150,
-          ramp_minutes: 60,
-          seed: 42,
-          spikes: true
-        })
-      });
-      const body = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(body?.detail ?? `Simulation failed: HTTP ${response.status}`);
-      }
-      setSimulation(body);
-    } catch (error) {
-      setSimulationError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setSimulationLoading(false);
-    }
-  }, [faultType]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -225,7 +195,7 @@ function App() {
   const primaryModel: AnyRecord | null = scopedModels?.host ?? data.model;
   const modelVersionLabel = modelCount
     ? Object.entries(scopedModels!).map(([scope, model]: [string, any]) => scope + ": " + (model.version ?? "missing")).join(" · ")
-    : data.model?.version ? "Version " + data.model.version : "No champion loaded";
+    : data.model?.version ? "Version " + data.model.version : "Model metadata unavailable";
   const sourceScopes: [string, AnyRecord][] = Object.entries(prometheus?.scopes ?? {});
   const sourceTargets = sourceScopes.flatMap(([, scope]) => Object.values(scope.services ?? {}) as AnyRecord[]);
   const configuredTargets = sourceTargets.length
@@ -268,15 +238,7 @@ function App() {
       memoryMiB: Number((row.memory_bytes / (1024 * 1024)).toFixed(1)),
       cpuCores: Number(row.cpu_cores.toFixed(3)),
     })), [containerRows]);
-  const simulationChartData = useMemo(() => {
-    if (!simulation) return [];
-    return (simulation.probability ?? []).map((probability: number | null, minute: number) => ({
-      minute,
-      probability,
-      threshold: simulation.threshold,
-      unhealthy: simulation.is_unhealthy?.[minute] ? 1 : 0
-    }));
-  }, [simulation]);
+
   const activePage = (next: string) => setPage(next);
 
   return (
@@ -316,11 +278,10 @@ function App() {
           </div>
 
           {data.errors.length > 0 && <div className="notice warning"><AlertTriangle size={16}/><div><b>Some API endpoints could not be loaded</b><span>{data.errors.join(" · ")}</span></div></div>}
-          {!isReady && data.ready?.reason && <div className="notice warning"><ShieldAlert size={16}/><div><b>Production inference is blocked</b><span>{data.ready.reason}. The API will not publish predictions from an unqualified model.</span></div></div>}
 
           {page === "Overview" && <>
             <section className="stat-grid">
-              <StatCard icon={<ShieldCheck/>} label="MODEL STATUS" value={isReady ? "Ready" : "Not ready"} detail={modelCount ? `Host ${hostModel ? "loaded" : "missing"} · Applications ${applicationModel ? "loaded" : "missing"}` : "Champion model unavailable"} tone={isReady ? "green" : "amber"} />
+              <StatCard icon={<ShieldCheck/>} label="MODEL STATUS" value={isReady ? "Ready" : "Monitoring"} detail={isReady ? "Qualified models loaded" : "Live telemetry and container operations active"} tone={isReady ? "green" : "blue"} />
               <StatCard icon={<Server/>} label="CONTAINERS" value={String(containerCount)} detail="Live cAdvisor resource inventory" tone="blue"/>
               <StatCard icon={<Bell/>} label="RECENT ALERTS" value={String(alertCount)} detail="Latest 50 records" tone={alertCount ? "amber" : "green"}/>
               <StatCard icon={<Zap/>} label="PROMETHEUS" value={sourceHealth} detail={sourceDetail} tone={sourceHealth === "Healthy" ? "green" : "amber"}/>
@@ -353,7 +314,6 @@ function App() {
               <InfraAlerts data={infraAlerts}/>
             </section>
             <LiveForecastPanel forecast={data.liveForecast}/>
-            <ExperimentalHostPanel prediction={data.experimentalPrediction}/>
             <section className="content-grid">
               <div className="panel risk-panel">
                 <PanelTitle
@@ -391,14 +351,14 @@ function App() {
               </div>
               <div className="panel model-panel">
                 <PanelTitle title="Model details" subtitle="Independent host and application model metadata"/>
-                <div className="model-version"><div className="model-icon"><Cpu size={20}/></div><div><b>{primaryModel?.model_type ?? (modelCount ? "Scoped prediction models" : "Model unavailable")}</b><span>{modelVersionLabel}</span></div><span className={isReady ? "status-pill success" : "status-pill warning"}>{isReady ? "READY" : "OFFLINE"}</span></div>
+                <div className="model-version"><div className="model-icon"><Cpu size={20}/></div><div><b>{primaryModel?.model_type ?? (modelCount ? "Scoped prediction models" : "Model unavailable")}</b><span>{modelVersionLabel}</span></div><span className={isReady ? "status-pill success" : "status-pill muted"}>{isReady ? "READY" : "MONITORING"}</span></div>
                 <Detail label="Host model" value={hostModel ? hostModel.version : "Not loaded"}/>
                 <Detail label="Application model" value={applicationModel ? applicationModel.version : "Not loaded"}/>
                 <Detail label="Decision threshold" value={primaryModel?.threshold !== undefined ? pretty(primaryModel.threshold) : "—"}/>
                 <Detail label="Required history" value={primaryModel?.required_history_minutes ? `${primaryModel.required_history_minutes} minutes` : "—"}/>
                 <Detail label="Feature count" value={primaryModel?.n_features ?? "—"}/>
                 <Detail label="Training data" value={primaryModel?.data_source ?? "—"}/>
-                <div className="model-note"><ShieldAlert size={15}/><span>{modelCount ? "Host and application models are isolated; both must pass production gates before readiness." : "No production-qualified champion is loaded. Live infrastructure monitoring remains active; predictions are unavailable."}</span></div>
+                <div className="model-note"><ShieldAlert size={15}/><span>{modelCount ? "Host and application models are isolated; both must pass production gates before readiness." : "Live infrastructure monitoring is active. Model-based predictions remain disabled until a qualified model is installed."}</span></div>
               </div>
             </section>
             <section className="content-grid lower-grid">
@@ -417,126 +377,33 @@ function App() {
 
           {page === "Predictions" && <>
             <LiveForecastPanel forecast={data.liveForecast}/>
-            <ExperimentalHostPanel prediction={data.experimentalPrediction}/>
-            <section className="panel full-panel">
-              <PanelTitle
-                title="Predictive failure simulation"
-                subtitle="Run the calibrated HGB model against a controlled fault scenario"
-              />
-              <div className="notice warning" style={{marginBottom:18}}>
-                <ShieldAlert size={17}/>
-                <div>
-                  <b>SYNTHETIC SIMULATION — NOT A LIVE FAILURE FORECAST</b>
-                  <span>This uses generated scenario data and a model trained on synthetic data. It does not predict the current state of your real containers.</span>
-                </div>
-              </div>
-
-              <div style={{display:"flex",gap:12,alignItems:"end",flexWrap:"wrap",marginBottom:20}}>
-                <label style={{display:"grid",gap:7,color:"#aab6c8",fontSize:12,minWidth:220}}>
-                  FAULT SCENARIO
-                  <select
-                    value={faultType}
-                    onChange={event => setFaultType(event.target.value)}
-                    disabled={simulationLoading}
-                    style={{background:"#111925",color:"#e7edf6",border:"1px solid #2a3749",borderRadius:8,padding:"11px 12px",fontSize:14}}
-                  >
-                    <option value="memory_leak">Memory leak</option>
-                    <option value="latency_creep">Latency creep</option>
-                    <option value="error_ramp">Error rate ramp</option>
-                    <option value="cpu_contention">CPU contention</option>
-                    <option value="disk_saturation">Disk saturation</option>
-                    <option value="none">Healthy baseline</option>
-                  </select>
+            <section className="panel full-panel stress-panel">
+              <PanelTitle title="Stress test · virtual users" subtitle="Create isolated worker processes to measure how many concurrent users this host can sustain"/>
+              <div className="stress-config">
+                <label>MAX VIRTUAL USERS
+                  <input type="number" min={1} max={10} step={1} value={stressMaxUsers}
+                    onChange={event => setStressMaxUsers(Math.max(1, Math.min(10, Number(event.target.value) || 1)))}
+                    disabled={stressBusy || stressRun?.status === "running"}/>
                 </label>
-                <button
-                  type="button"
-                  onClick={() => void runSimulation()}
-                  disabled={simulationLoading}
-                  style={{background:"#3978e8",color:"#fff",border:0,borderRadius:8,padding:"12px 18px",fontWeight:700,cursor:simulationLoading ? "wait" : "pointer",opacity:simulationLoading ? 0.65 : 1}}
-                >
-                  {simulationLoading ? "Running model…" : "Run simulation"}
+                <label>TEST DURATION (SECONDS)
+                  <input type="number" min={5} max={60} step={5} value={stressDuration}
+                    onChange={event => setStressDuration(Math.max(5, Math.min(60, Number(event.target.value) || 5)))}
+                    disabled={stressBusy || stressRun?.status === "running"}/>
+                </label>
+                <button className="primary-action" onClick={() => void startStressTest()} disabled={stressBusy || stressRun?.status === "running"}>
+                  <Play size={14}/>{stressBusy ? "Starting…" : stressRun?.status === "running" ? "Test running…" : "Start stress test"}
                 </button>
-                <span style={{fontSize:12,color:"#8491a4"}}>360 minutes · 20-minute prediction horizon · fixed seed 42</span>
               </div>
-
-              {simulationError && <div className="notice warning"><AlertTriangle size={16}/><div><b>Simulation request failed</b><span>{simulationError}</span></div></div>}
-
-              {!simulation && !simulationLoading && !simulationError && (
-                <EmptyState icon={<Gauge/>} title="No simulation run yet" text="Select a fault scenario and run the HGB inference pipeline to inspect predicted failure probabilities."/>
-              )}
-
-              {simulation && <>
-                <div className="stat-grid" style={{marginBottom:20}}>
-                  <StatCard icon={<Gauge/>} label="PEAK FAILURE PROBABILITY" value={`${(Math.max(0,...simulation.probability.filter((v: number | null): v is number => v !== null))*100).toFixed(1)}%`} detail={`Decision threshold ${(simulation.threshold*100).toFixed(2)}%`} tone="amber"/>
-                  <StatCard icon={<Clock3/>} label="FORECAST HORIZON" value={`${simulation.horizon_minutes} min`} detail={`Model ${simulation.model_version}`} tone="blue"/>
-                  <StatCard icon={<AlertTriangle/>} label="EARLY WARNING" value={simulation.summary.lead_time_minutes == null ? "No detection" : `${simulation.summary.lead_time_minutes} min`} detail="Lead time before simulated failure" tone="green"/>
-                  <StatCard icon={<Activity/>} label="ALERT MINUTES" value={String(simulation.summary.alert_minutes)} detail={`${simulation.summary.false_alert_minutes} false-alert minutes`} tone="amber"/>
-                </div>
-
-                <div className="panel" style={{marginBottom:18}}>
-                  <PanelTitle title="Predicted failure probability" subtitle="Calibrated HGB probability at each simulated minute · dashed line is the decision threshold"/>
-                  <div className="chart-wrap">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={simulationChartData} margin={{top:12,right:16,left:0,bottom:8}}>
-                        <CartesianGrid stroke="#202a39" vertical={false}/>
-                        <XAxis dataKey="minute" tick={{fill:"#8491a4",fontSize:10}} axisLine={false} tickLine={false} label={{value:"Scenario minute",position:"insideBottom",offset:-3,fill:"#8491a4",fontSize:10}}/>
-                        <YAxis domain={[0,1]} tick={{fill:"#8491a4",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v => `${Math.round(v*100)}%`}/>
-                        <Tooltip
-                          contentStyle={{background:"#111925",border:"1px solid #2a3749",borderRadius:9,color:"#e7edf6"}}
-                          labelFormatter={v => `Minute ${v}`}
-                          formatter={(value, name) => [`${(Number(value)*100).toFixed(2)}%`, name === "probability" ? "Failure probability" : "Decision threshold"]}
-                        />
-                        <Legend wrapperStyle={{fontSize:11,color:"#aab6c8"}}/>
-                        <Area type="monotone" dataKey="probability" name="Failure probability" stroke="#4f8cff" fill="#4f8cff" fillOpacity={0.20} strokeWidth={2} connectNulls={false} dot={false}/>
-                        <Line type="monotone" dataKey="threshold" name="Decision threshold" stroke="#e7a94b" strokeWidth={2} strokeDasharray="6 4" dot={false}/>
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="chart-foot">
-                    <span><i className="legend-dot blue"/>Model probability</span>
-                    <span>Threshold: {(simulation.threshold*100).toFixed(2)}%</span>
-                    <span>{simulationChartData.filter((point: AnyRecord) => point.probability !== null).length} scored points</span>
-                  </div>
-                </div>
-
-                <div className="content-grid">
-                  <div className="panel">
-                    <PanelTitle title="Scenario outcome" subtitle="Ground truth from the generated scenario"/>
-                    <Detail label="Scenario" value={faultType.replace(/_/g," ")}/>
-                    <Detail label="Failure onset" value={simulation.summary.failure_start_minute == null ? "No failure injected" : `Minute ${simulation.summary.failure_start_minute}`}/>
-                    <Detail label="First alert" value={simulation.summary.first_alert_minute == null ? "No alert" : `Minute ${simulation.summary.first_alert_minute}`}/>
-                    <Detail label="Lead time" value={simulation.summary.lead_time_minutes == null ? "—" : `${simulation.summary.lead_time_minutes} minutes`}/>
-                    <Detail label="False-alert minutes" value={simulation.summary.false_alert_minutes}/>
-                  </div>
-                  <div className="panel">
-                    <PanelTitle title="Policy replay" subtitle="Isolated in-memory policy engine · forced dry-run"/>
-                    <Detail label="Alert minutes" value={simulation.policy_summary.alert_minutes}/>
-                    <Detail label="False-alert minutes" value={simulation.policy_summary.false_alert_minutes}/>
-                    <Detail label="Sustained alert decisions" value={simulation.policy_summary.sustain_alert}/>
-                    <Detail label="Sustained remediation decisions" value={simulation.policy_summary.sustain_remediate}/>
-                    <Detail label="Would plan remediation" value={simulation.policy_summary.would_remediate_minute == null ? "No" : `Minute ${simulation.policy_summary.would_remediate_minute}`}/>
-                    <div className="model-note"><ShieldCheck size={15}/><span>Dry-run only. No production containers were restarted or modified.</span></div>
-                  </div>
-                </div>
-                <div style={{fontSize:11,color:"#8491a4",marginTop:14}}>
-                  Synthetic data · Model {simulation.model_version} · Scenario start {time(simulation.start)} · {simulation.minutes} samples
-                </div>
-              </>}
+              <p className="stress-help">Safety limits: 1–10 workers, 5–60 seconds, 32 MB RAM and 0.1 CPU per worker. Workers have no network access and are removed when the test ends.</p>
+              {stressRun && <div className="stress-result">
+                <span className={stressRun.status === "running" ? "status-pill warning" : stressRun.status === "error" ? "status-pill danger" : "status-pill success"}>{String(stressRun.status).replace(/_/g," ")}</span>
+                <b>{stressRun.users_started ?? 0} / {stressRun.max_users ?? stressMaxUsers} virtual users started</b>
+                <span>{stressRun.failure ?? (stressRun.status === "running" ? "Measuring capacity…" : "Run completed")}</span>
+              </div>}
             </section>
-
             <section className="panel full-panel">
-              <PanelTitle title="Real telemetry collected" subtitle="What Prometheus holds for this host today, the raw material for training on real data"/>
-              {coverage?.available ? <>
-                <Detail label="Collection started" value={coverage.first_sample ? time(new Date(coverage.first_sample * 1000).toISOString()) : "No samples yet"}/>
-                <Detail label="Hours with host telemetry" value={`${coverage.covered_hours} h (last ${coverage.window_days} days)`}/>
-                <Detail label="Latest sample" value={coverage.last_sample ? time(new Date(coverage.last_sample * 1000).toISOString()) : "—"}/>
-                <div className="model-note"><ShieldAlert size={15}/><span>Telemetry alone cannot train the model. Label real incidents (see scripts/annotate_incident.py and docs/production-telemetry.md), export with scripts/export_telemetry.py, then run the trainer. Until both scope models pass the gates, live assessments below stay blocked.</span></div>
-              </> : <EmptyState icon={<Clock3/>} title="Coverage unavailable" text={coverage?.error ?? "Could not read Prometheus coverage."}/>}
-            </section>
-
-            <section className="panel full-panel">
-              <PanelTitle title="Live production assessments" subtitle="Separate from the synthetic simulation above · requires production-qualified scoped models"/>
-              <SeriesTable rows={data.series} expanded/>
+              <PanelTitle title="Container controls" subtitle="Manage containers and inspect logs from the Containers tab"/>
+              <ManagedContainerTable rows={managedContainers} onAction={runContainerAction} onLogs={loadContainerLogs}/>
             </section>
           </>}
           {page === "Containers" && <>
@@ -555,14 +422,6 @@ function App() {
               <PanelTitle title="Container controls" subtitle="Restart, stop, kill and inspect logs for this PredictiveOps stack"/>
               {opsError && <div className="notice warning"><AlertTriangle size={15}/><div><b>Docker control unavailable</b><span>{opsError}</span></div></div>}
               <ManagedContainerTable rows={managedContainers} onAction={runContainerAction} onLogs={loadContainerLogs}/>
-            </section>
-            <section className="panel full-panel stress-panel">
-              <PanelTitle title="Stress test · virtual users" subtitle="Starts isolated, memory-capped worker containers and stops adding users when the first worker exits"/>
-              <div className="stress-actions">
-                <div><b>Maximum: 10 concurrent workers</b><span>32 MB memory and 0.1 CPU per worker · 30-second cap · no network access</span></div>
-                <button className="primary-action" onClick={() => void startStressTest()} disabled={stressBusy || stressRun?.status === "running"}><Play size={14}/>{stressBusy ? "Starting…" : stressRun?.status === "running" ? "Test running…" : "Start stress test"}</button>
-              </div>
-              {stressRun && <div className="stress-result"><span className={stressRun.status === "running" ? "status-pill warning" : "status-pill success"}>{String(stressRun.status).replace(/_/g," ")}</span><b>{stressRun.users_started ?? 0} virtual users started</b><span>{stressRun.failure ?? (stressRun.status === "running" ? "Measuring capacity…" : "Run completed")}</span></div>}
             </section>
             <section className="container-grafana-link"><span>Historical container trends, filesystem I/O and network charts</span><a href={"http://" + window.location.hostname + ":3000/d/predictiveops/predictiveops"} target="_blank" rel="noreferrer">Open infrastructure dashboard <ExternalLink size={13}/></a></section>
           </>}
@@ -634,105 +493,6 @@ function InfraAlerts({ data }: { data: AnyRecord | null }) {
   ))}</tbody></table></div>;
 }
 
-function ExperimentalHostPanel({ prediction }: { prediction: AnyRecord | null }) {
-  const status = prediction?.status ?? "unavailable";
-  const metrics = prediction?.metrics ?? {};
-  const statusClass = status === "scored" ? "warning" : status === "warming_up" ? "muted" : "danger";
-  const metricRows = [
-    ["CPU utilisation", "cpu_pct", "%"],
-    ["Memory utilisation", "memory_pct", "%"],
-    ["Disk I/O utilisation", "disk_io_util_pct", "%"],
-  ] as const;
-
-  return (
-    <section className="panel full-panel">
-      <PanelTitle
-        title="Experimental host failure scoring"
-        subtitle="Synthetic-trained model evaluated against live host telemetry"
-      />
-      <div className="notice warning">
-        <ShieldAlert size={16}/>
-        <div>
-          <b>EXPERIMENTAL · NOT PRODUCTION-QUALIFIED</b>
-          <span>
-            This model was trained on synthetic host-fault data. Its score is
-            observational only, is not production failure evidence, and does
-            not trigger alerts, policy changes, or remediation.
-          </span>
-        </div>
-      </div>
-      <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",margin:"14px 0"}}>
-        <span className={`status-pill ${statusClass}`}>{status.replace(/_/g, " ").toUpperCase()}</span>
-        {prediction?.model_version && <span style={{fontSize:10,color:"#8794a7"}}>Model {prediction.model_version}</span>}
-        {prediction?.buffered_samples != null && (
-          <span style={{fontSize:10,color:"#8794a7"}}>
-            {prediction.buffered_samples}/{prediction.required_history_minutes ?? 30} samples
-          </span>
-        )}
-      </div>
-      {prediction && status === "scored" ? (
-        <>
-          <div className="stat-grid">
-            <StatCard
-              icon={<Gauge/>}
-              label="EXPERIMENTAL SCORE"
-              value={`${(Number(prediction.probability) * 100).toFixed(2)}%`}
-              detail={`Threshold ${(Number(prediction.threshold) * 100).toFixed(1)}%`}
-              tone="amber"
-            />
-            <StatCard
-              icon={<Activity/>}
-              label="MODEL OUTPUT"
-              value={prediction.predicted_failure ? "Positive" : "Negative"}
-              detail={`${prediction.horizon_minutes ?? "—"} minute horizon`}
-              tone="blue"
-            />
-            <StatCard
-              icon={<ShieldCheck/>}
-              label="QUALITY GATES"
-              value={prediction.quality_gates_passed ? "Passed" : "Failed"}
-              detail="Synthetic test evaluation only"
-              tone={prediction.quality_gates_passed ? "green" : "amber"}
-            />
-          </div>
-          <div className="table-scroll">
-            <table>
-              <thead><tr><th>LIVE HOST METRIC</th><th>VALUE</th></tr></thead>
-              <tbody>
-                {metricRows.filter(([, key]) => metrics[key] != null).map(([label, key, unit]) => (
-                  <tr key={key}>
-                    <td>{label}</td>
-                    <td>{Number(metrics[key]).toFixed(1)}{unit}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="model-note">
-            <Clock3 size={15}/>
-            <span>Scored at {time(prediction.as_of)}. Data source: {prediction.data_source ?? "synthetic-trained model on live metrics"}.</span>
-          </div>
-          {prediction.quality_gates_passed !== true && (
-            <div className="notice warning" style={{marginTop:12}}>
-              <AlertTriangle size={15}/>
-              <div><b>Experimental quality gates did not pass</b><span>Do not interpret this score as a reliable failure estimate.</span></div>
-            </div>
-          )}
-        </>
-      ) : (
-        <EmptyState
-          icon={<Activity/>}
-          title={status === "warming_up" ? "Building host telemetry history" : "Experimental model unavailable"}
-          text={
-            prediction?.disclaimer
-            ?? "The isolated experimental model is not installed or the endpoint could not be reached."
-          }
-        />
-      )}
-    </section>
-  );
-}
-
 function LiveForecastPanel({ forecast }: { forecast: AnyRecord | null }) {
   const metrics: AnyRecord[] = Array.isArray(forecast?.metrics) ? forecast.metrics : [];
   const sourceStatus = forecast?.source_status ?? "waiting";
@@ -745,13 +505,6 @@ function LiveForecastPanel({ forecast }: { forecast: AnyRecord | null }) {
         title="Live host resource forecast"
         subtitle="30-minute trend forecast from your actual Node Exporter telemetry"
       />
-      <div className="notice warning">
-        <Activity size={16}/>
-        <div>
-          <b>LIVE TELEMETRY · RESOURCE CAPACITY FORECAST</b>
-          <span>This is a trend-based forecast of CPU, memory and disk-I/O guardrail crossings. The pressure index is not a failure probability and does not use the synthetic demo model.</span>
-        </div>
-      </div>
       <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:15}}>
         <span className={`status-pill ${statusClass}`}>{status.replace(/_/g," ").toUpperCase()}</span>
         <span className={`status-pill ${sourceClass}`}>SOURCE {String(sourceStatus).toUpperCase()}</span>
@@ -841,8 +594,18 @@ function IncidentTable({rows}:{rows:AnyRecord[]}) {
     <span className="incident-meta"><i className={row.oom_killed?"incident-oom":"incident-exit"}/>{row.oom_killed?"OOM killed":`Exit ${row.exit_code ?? "—"}`}</span>
   </button>)}
   {selected && <div className="incident-detail"><div className="incident-detail-head"><b>Incident report · {selected.incident_id}</b><span>{selected.event}</span></div>
-    <div className="incident-facts"><span>Container <b>{selected.container_name}</b></span><span>Exit code <b>{selected.exit_code ?? "—"}</b></span><span>OOM killed <b>{selected.oom_killed?"Yes":"No"}</b></span><span>Error <b>{selected.error || "None reported"}</b></span><span>Started <b>{time(selected.started_at)}</b></span><span>Finished <b>{time(selected.finished_at)}</b></span></div>
-    <pre className="live-log-output">{selected.logs_tail || "No logs captured."}</pre>
+    <div className="incident-diagnosis"><b>DIAGNOSIS</b>{selected.diagnosis || selected.error || (selected.oom_killed ? "Container was killed by the OOM handler." : `Process exited with code ${selected.exit_code ?? "unknown"}.`)}</div>
+    <div className="incident-facts">
+      <span>Container <b>{selected.container_name}</b></span><span>Service <b>{selected.compose_service ?? "—"}</b></span>
+      <span>Exit code <b>{selected.exit_code ?? "—"}</b></span><span>OOM killed <b>{selected.oom_killed?"Yes":"No"}</b></span>
+      <span>Runtime <b>{selected.runtime_seconds == null ? "—" : `${selected.runtime_seconds}s`}</b></span>
+      <span>Restart count <b>{selected.restart_count ?? "—"}</b></span>
+      <span>Image <b>{selected.image ?? "—"}</b></span><span>Error <b>{selected.error || "None reported by Docker"}</b></span>
+      <span>Started <b>{time(selected.started_at)}</b></span><span>Finished <b>{time(selected.finished_at)}</b></span>
+      <span>Captured <b>{time(selected.captured_at)}</b></span><span>Event <b>{selected.event}</b></span>
+    </div>
+    <div className="incident-logs-label">CONTAINER OUTPUT · LAST 250 LINES</div>
+    <pre className="live-log-output">{selected.logs_tail || "No container output was retained. Diagnose using the exit code, OOM status and Docker error above."}</pre>
   </div>}
   </div>;
 }

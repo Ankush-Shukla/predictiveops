@@ -59,3 +59,15 @@
 .incident-facts span{font-size:9px;color:#8794a7;min-width:0;overflow-wrap:anywhere}
 .incident-facts b{display:block;color:#dce5f2;margin-top:4px;font-weight:600}
 @media(max-width:700px){.container-actions{flex-wrap:wrap}.incident-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.log-toolbar{flex-direction:column}.log-toolbar select{min-width:0;width:100%}}
+
+
+/* Configurable stress test controls and richer incident details */
+.stress-config{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-top:16px}
+.stress-config label{display:grid;gap:7px;color:#aab6c8;font-size:9px;font-weight:800;letter-spacing:.7px}
+.stress-config input{width:150px;padding:10px 11px;border:1px solid #2b3a4e;border-radius:7px;background:#111b28;color:#e7edf6;font-size:13px}
+.stress-config input:disabled{opacity:.55}
+.stress-help{margin:12px 0 0;color:#8290a3;font-size:10px;line-height:1.6}
+.incident-diagnosis{padding:11px 12px;margin:12px 0;border-left:3px solid #e8b45b;border-radius:5px;background:#171d26;color:#d7dfeb;font-size:10px;line-height:1.6}
+.incident-diagnosis b{display:block;margin-bottom:4px;color:#e8b45b;font-size:9px;letter-spacing:.6px}
+.incident-logs-label{margin:14px 0 7px;color:#8794a7;font-size:9px;font-weight:800;letter-spacing:.7px}
+@media(max-width:700px){.stress-config{align-items:stretch;flex-direction:column}.stress-config label,.stress-config input{width:100%}}
