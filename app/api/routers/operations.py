@@ -387,7 +387,7 @@ def _run_stress(path: Path, run_id: str, max_users: int, duration: int,
                 audit, collectors):
     workers = []
     failure = None
-    started_clock = time.monotonic()
+    started_clock = None
     started_at = datetime.now(UTC)
     status = "completed"
     series_id = f"stress:{run_id}"
@@ -418,6 +418,8 @@ def _run_stress(path: Path, run_id: str, max_users: int, duration: int,
                 db.execute("UPDATE stress_runs SET users_started=?,worker_ids=? WHERE id=?",
                            (len(workers), json.dumps([w.id for w in workers]), run_id))
 
+        # The observation window begins after the image is available and workers are created.
+        started_clock = time.monotonic()
         deadline = started_clock + duration
         while time.monotonic() < deadline and not failure:
             for active_index, active in enumerate(workers, start=1):
@@ -485,7 +487,8 @@ def _run_stress(path: Path, run_id: str, max_users: int, duration: int,
             target=None, outcome=status, dry_run=True, probability=None,
             model_version=None, reason=failure or "Stress test completed",
             details={"users_started": len(workers), "workers_removed": removed,
-                     "duration_seconds": round(time.monotonic() - started_clock, 2)},
+                     "duration_seconds": round(time.monotonic() - started_clock, 2)
+                     if started_clock is not None else 0.0},
         )
 
 
