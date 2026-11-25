@@ -53,6 +53,32 @@ function App() {
   const [simulation, setSimulation] = useState<AnyRecord | null>(null);
   const [simulationLoading, setSimulationLoading] = useState(false);
   const [simulationError, setSimulationError] = useState<string | null>(null);
+  const [rangeMinutes, setRangeMinutes] = useState(60);
+  const [history, setHistory] = useState<AnyRecord | null>(null);
+  const [infraAlerts, setInfraAlerts] = useState<AnyRecord | null>(null);
+  const [coverage, setCoverage] = useState<AnyRecord | null>(null);
+
+  const refreshLive = useCallback(async () => {
+    const [nextHistory, nextAlerts, nextCoverage] = await Promise.all([
+      get(`/v1/host/history?minutes=${rangeMinutes}`).catch(() => null),
+      get("/v1/infra/alerts").catch(() => null),
+      get("/v1/telemetry/coverage").catch(() => null),
+    ]);
+    setHistory(nextHistory);
+    setInfraAlerts(nextAlerts);
+    setCoverage(nextCoverage);
+  }, [rangeMinutes]);
+
+  useEffect(() => {
+    void refreshLive();
+    const timer = window.setInterval(() => void refreshLive(), 10000);
+    return () => window.clearInterval(timer);
+  }, [refreshLive]);
+
+  const historyData = useMemo(
+    () => (history?.points ?? []).map((point: AnyRecord) => ({ ...point, time: point.t * 1000 })),
+    [history],
+  );
 
   const runSimulation = useCallback(async () => {
     setSimulationLoading(true);
@@ -195,7 +221,7 @@ function App() {
           <div className="breadcrumbs"><span>Workspace</span><ChevronRight size={14}/><b>{page}</b></div>
           <div className="top-actions">
             <div className="live-indicator"><i/>API {data.health?.status === "ok" ? "online" : "unavailable"}</div>
-            <button className="icon-button" onClick={() => void refresh()} title="Refresh data" disabled={refreshing}><RefreshCw size={16} className={refreshing ? "spin" : ""}/></button>
+            <button className="icon-button" onClick={() => { void refresh(); void refreshLive(); }} title="Refresh data" disabled={refreshing}><RefreshCw size={16} className={refreshing ? "spin" : ""}/></button>
             <div className="avatar">PO</div>
           </div>
         </header>
@@ -215,6 +241,33 @@ function App() {
               <StatCard icon={<Server/>} label="CONTAINERS" value={String(containerCount)} detail="Live cAdvisor resource inventory" tone="blue"/>
               <StatCard icon={<Bell/>} label="RECENT ALERTS" value={String(alertCount)} detail="Latest 50 records" tone={alertCount ? "amber" : "green"}/>
               <StatCard icon={<Zap/>} label="PROMETHEUS" value={sourceHealth} detail={sourceDetail} tone={sourceHealth === "Healthy" ? "green" : "amber"}/>
+            </section>
+            <section className="panel full-panel">
+              <PanelTitle
+                title="Live host telemetry"
+                subtitle={`Real Prometheus data${history?.series_id ? " from " + history.series_id : ""} · the same queries the host model reads · refreshed every 10 seconds`}
+              />
+              <div className="range-tabs" role="group" aria-label="Time range">
+                {RANGES.map(([minutes, label]) => (
+                  <button key={minutes} type="button" className={rangeMinutes === minutes ? "range-tab active" : "range-tab"} onClick={() => setRangeMinutes(minutes)}>{label}</button>
+                ))}
+              </div>
+              {history?.available ? (
+                <div className="metric-grid">
+                  <MetricChart title="CPU utilisation" unit="%" data={historyData} latest={history.latest} domain={[0, 100]} series={[{ key: "cpu_pct", name: "CPU", color: "#5c96ff" }]}/>
+                  <MetricChart title="Memory used" unit="%" data={historyData} latest={history.latest} domain={[0, 100]} series={[{ key: "memory_pct", name: "Memory", color: "#45c49a" }]}/>
+                  <MetricChart title="Disk I/O utilisation" unit="%" data={historyData} latest={history.latest} domain={[0, 100]} series={[{ key: "disk_io_util_pct", name: "Disk I/O", color: "#e8b45b" }]}/>
+                  <MetricChart title="Network (physical NICs)" unit=" Mbps" data={historyData} latest={history.latest} series={[{ key: "network_rx_mbps", name: "Receive", color: "#5c96ff" }, { key: "network_tx_mbps", name: "Transmit", color: "#f07878" }]}/>
+                  <MetricChart title="Load average (1m)" unit="" data={historyData} latest={history.latest} series={[{ key: "load1", name: "Load", color: "#b794f6" }]}/>
+                  <MetricChart title="Root filesystem used" unit="%" data={historyData} latest={history.latest} domain={[0, 100]} series={[{ key: "root_disk_used_pct", name: "Root disk", color: "#f0a36b" }]}/>
+                </div>
+              ) : (
+                <EmptyState icon={<Activity/>} title="No host telemetry yet" text={history?.error ? `Prometheus query failed: ${history.error}` : "Waiting for Node Exporter samples from Prometheus."}/>
+              )}
+            </section>
+            <section className="panel full-panel">
+              <PanelTitle title="Infrastructure alerts" subtitle="Pending and firing Prometheus alerts, including the static-threshold safety net"/>
+              <InfraAlerts data={infraAlerts}/>
             </section>
             <section className="content-grid">
               <div className="panel risk-panel">
@@ -385,6 +438,16 @@ function App() {
             </section>
 
             <section className="panel full-panel">
+              <PanelTitle title="Real telemetry collected" subtitle="What Prometheus holds for this host today, the raw material for training on real data"/>
+              {coverage?.available ? <>
+                <Detail label="Collection started" value={coverage.first_sample ? time(new Date(coverage.first_sample * 1000).toISOString()) : "No samples yet"}/>
+                <Detail label="Hours with host telemetry" value={`${coverage.covered_hours} h (last ${coverage.window_days} days)`}/>
+                <Detail label="Latest sample" value={coverage.last_sample ? time(new Date(coverage.last_sample * 1000).toISOString()) : "—"}/>
+                <div className="model-note"><ShieldAlert size={15}/><span>Telemetry alone cannot train the model. Label real incidents (see scripts/annotate_incident.py and docs/production-telemetry.md), export with scripts/export_telemetry.py, then run the trainer. Until both scope models pass the gates, live assessments below stay blocked.</span></div>
+              </> : <EmptyState icon={<Clock3/>} title="Coverage unavailable" text={coverage?.error ?? "Could not read Prometheus coverage."}/>}
+            </section>
+
+            <section className="panel full-panel">
               <PanelTitle title="Live production assessments" subtitle="Separate from the synthetic simulation above · requires production-qualified scoped models"/>
               <SeriesTable rows={data.series} expanded/>
             </section>
@@ -403,7 +466,7 @@ function App() {
             </section>
             <section className="container-grafana-link"><span>Historical container trends, filesystem I/O and network charts</span><a href={"http://" + window.location.hostname + ":3000/d/predictiveops/predictiveops"} target="_blank" rel="noreferrer">Open infrastructure dashboard <ExternalLink size={13}/></a></section>
           </>}
-          {page === "Alerts & audit" && <section className="content-grid stacked-panels"><div className="panel"><PanelTitle title="Recent alerts" subtitle="Policy-generated service alerts"/><RecordTable rows={data.alerts} empty="No alert records returned."/></div><div className="panel"><PanelTitle title="Remediation audit" subtitle="Executed, dry-run, blocked and skipped decisions"/><RecordTable rows={data.audit} empty="No remediation decisions recorded."/></div></section>}
+          {page === "Alerts & audit" && <section className="content-grid stacked-panels"><div className="panel"><PanelTitle title="Infrastructure alerts" subtitle="Pending and firing Prometheus alerts"/><InfraAlerts data={infraAlerts}/></div><div className="panel"><PanelTitle title="Recent alerts" subtitle="Policy-generated service alerts"/><RecordTable rows={data.alerts} empty="No alert records returned."/></div><div className="panel"><PanelTitle title="Remediation audit" subtitle="Executed, dry-run, blocked and skipped decisions"/><RecordTable rows={data.audit} empty="No remediation decisions recorded."/></div></section>}
 
           <footer className="footer"><span>PredictiveOps <b>·</b> Reliability intelligence</span><span>Refresh interval 10s <b>·</b> {loading ? "Connecting…" : "API snapshot loaded"}</span></footer>
         </div>
@@ -412,6 +475,50 @@ function App() {
   );
 }
 
+const RANGES = [[15, "15m"], [60, "1h"], [360, "6h"], [1440, "24h"]] as const;
+const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+type MetricSeries = { key: string; name: string; color: string };
+function MetricChart({ title, unit, data, latest, series, domain }: {
+  title: string; unit: string; data: AnyRecord[]; latest: AnyRecord | undefined;
+  series: MetricSeries[]; domain?: [number, number];
+}) {
+  const now = series.map(item => {
+    const value = latest?.[item.key];
+    return typeof value === "number" ? `${value.toFixed(1)}${unit}` : "—";
+  }).join(" · ");
+  return (
+    <div className="metric-card">
+      <div className="metric-head"><span>{title}</span><b>{now}</b></div>
+      <div className="metric-chart">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data} margin={{ top: 6, right: 8, left: -18, bottom: 0 }}>
+            <CartesianGrid stroke="#202a39" vertical={false}/>
+            <XAxis dataKey="time" type="number" scale="time" domain={["dataMin", "dataMax"]} tickFormatter={clock} tick={{ fill: "#8491a4", fontSize: 9 }} axisLine={false} tickLine={false} minTickGap={36}/>
+            <YAxis domain={domain ?? [0, "auto"]} tick={{ fill: "#8491a4", fontSize: 9 }} axisLine={false} tickLine={false}/>
+            <Tooltip
+              contentStyle={{ background: "#111925", border: "1px solid #2a3749", borderRadius: 9, color: "#e7edf6", fontSize: 11 }}
+              labelFormatter={value => new Date(Number(value)).toLocaleString()}
+              formatter={(value, name) => [typeof value === "number" ? `${value.toFixed(2)}${unit}` : "—", name]}
+            />
+            {series.map(item => (
+              <Area key={item.key} type="monotone" dataKey={item.key} name={item.name} stroke={item.color} fill={item.color} fillOpacity={0.14} strokeWidth={1.6} dot={false} connectNulls={false} isAnimationActive={false}/>
+            ))}
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+function InfraAlerts({ data }: { data: AnyRecord | null }) {
+  if (!data) return <EmptyState icon={<AlertTriangle/>} title="Alert status unavailable" text="The API could not reach Prometheus for alert state."/>;
+  if (data.available === false) return <EmptyState icon={<AlertTriangle/>} title="Alert status unavailable" text={data.error ?? "Prometheus did not answer."}/>;
+  const rows: AnyRecord[] = data.alerts ?? [];
+  if (!rows.length) return <EmptyState icon={<CheckCircle2/>} title="No pending or firing alerts" text="All Prometheus alert rules are currently inactive."/>;
+  return <div className="table-scroll"><table><thead><tr><th>ALERT</th><th>STATE</th><th>SEVERITY</th><th>SCOPE</th><th>SUMMARY</th><th>ACTIVE SINCE</th></tr></thead><tbody>{rows.map((row, i) => (
+    <tr key={`${row.name}-${i}`}><td><span className="service-name">{row.name}</span></td><td><span className={`status-pill ${row.state === "firing" ? "danger" : "warning"}`}>{row.state}</span></td><td>{row.severity}</td><td>{row.scope ?? "—"}</td><td>{row.summary || "—"}</td><td>{time(row.active_at)}</td></tr>
+  ))}</tbody></table></div>;
+}
 function StatCard({icon,label,value,detail,tone}:{icon:ReactNode;label:string;value:string;detail:string;tone:string}) {
   return <div className="stat-card"><div className={`stat-icon ${tone}`}>{icon}</div><div className="stat-label">{label}</div><div className="stat-value">{value}</div><div className="stat-detail">{detail}</div></div>;
 }

@@ -1,0 +1,811 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index 80fa767..c8aa074 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
+ 
+ from app.api.errors import register_error_handlers
+ from app.api.poller import PrometheusPoller
+-from app.api.routers import canary, policy, predict, simulate, system
++from app.api.routers import canary, history, policy, predict, simulate, system
+ from app.api.state import ApiState
+ from app.core.config import Settings, get_settings
+ from app.core.domain import APPLICATION_METRIC_COLUMNS, HOST_METRIC_COLUMNS
+@@ -134,6 +134,7 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
+         return response
+ 
+     app.include_router(system.router)
++    app.include_router(history.router)
+     app.include_router(predict.router)
+     app.include_router(policy.router)
+     if settings.env != "production":
+diff --git a/app/api/routers/history.py b/app/api/routers/history.py
+new file mode 100644
+index 0000000..5f8f415
+--- /dev/null
++++ b/app/api/routers/history.py
+@@ -0,0 +1,97 @@
++"""Read-only endpoints that expose real Prometheus telemetry to the dashboard."""
++
++from __future__ import annotations
++
++import asyncio
++import time
++
++import httpx
++from fastapi import APIRouter, Depends, Query
++
++from app.api.deps import get_state
++from app.api.state import ApiState
++from app.services.host_history import (
++    HOST_HISTORY_QUERIES,
++    latest_values,
++    matrix_to_map,
++    merge_points,
++    parse_alerts,
++    pick_step,
++    summarize_coverage,
++)
++
++router = APIRouter(tags=["monitoring"])
++
++COVERAGE_DAYS = 30
++COVERAGE_STEP_SECONDS = 3600
++TIMEOUT_SECONDS = 4.0
++
++
++def prometheus_client(base_url: str) -> httpx.AsyncClient:
++    """Factory kept separate so tests can inject a mock transport."""
++    return httpx.AsyncClient(base_url=base_url.rstrip("/"), timeout=TIMEOUT_SECONDS)
++
++
++@router.get("/v1/host/history")
++async def host_history(
++    minutes: int = Query(60, ge=5, le=1440, description="Window length ending now"),
++    state: ApiState = Depends(get_state),
++) -> dict:
++    """Real host metrics over time, using the same PromQL the host model consumes."""
++    end = time.time()
++    step = pick_step(minutes)
++    start = end - minutes * 60
++    names = list(HOST_HISTORY_QUERIES)
++    try:
++        async with prometheus_client(state.settings.prometheus_url) as client:
++            responses = await asyncio.gather(*(
++                client.get("/api/v1/query_range", params={
++                    "query": query, "start": f"{start:.3f}", "end": f"{end:.3f}", "step": str(step)})
++                for query in HOST_HISTORY_QUERIES.values()
++            ))
++        series = {}
++        for name, response in zip(names, responses, strict=True):
++            response.raise_for_status()
++            series[name] = matrix_to_map(response.json())
++    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
++        return {"available": False, "minutes": minutes, "step_seconds": step,
++                "points": [], "latest": {}, "error": str(exc)}
++    points = merge_points(series)
++    return {
++        "available": bool(points),
++        "minutes": minutes,
++        "step_seconds": step,
++        "series_id": state.settings.prometheus_host_series_id,
++        "points": points,
++        "latest": latest_values(points, names),
++    }
++
++
++@router.get("/v1/telemetry/coverage")
++async def telemetry_coverage(state: ApiState = Depends(get_state)) -> dict:
++    """How much real host telemetry exists, i.e. how close we are to having training data."""
++    end = time.time()
++    start = end - COVERAGE_DAYS * 86400
++    try:
++        async with prometheus_client(state.settings.prometheus_url) as client:
++            response = await client.get("/api/v1/query_range", params={
++                "query": 'max(up{job="node-exporter"})', "start": f"{start:.0f}",
++                "end": f"{end:.0f}", "step": str(COVERAGE_STEP_SECONDS)})
++        response.raise_for_status()
++        summary = summarize_coverage(response.json(), COVERAGE_STEP_SECONDS)
++    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
++        return {"available": False, "error": str(exc)}
++    return {"available": True, "window_days": COVERAGE_DAYS, **summary}
++
++
++@router.get("/v1/infra/alerts")
++async def infra_alerts(state: ApiState = Depends(get_state)) -> dict:
++    """Pending and firing alerts from Prometheus, including the static safety-net rules."""
++    try:
++        async with prometheus_client(state.settings.prometheus_url) as client:
++            response = await client.get("/api/v1/alerts")
++        response.raise_for_status()
++        alerts = parse_alerts(response.json())
++    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
++        return {"available": False, "alerts": [], "error": str(exc)}
++    return {"available": True, "alerts": alerts, "firing": sum(a["state"] == "firing" for a in alerts)}
+diff --git a/app/services/host_history.py b/app/services/host_history.py
+new file mode 100644
+index 0000000..5205c00
+--- /dev/null
++++ b/app/services/host_history.py
+@@ -0,0 +1,105 @@
++"""Pure helpers that shape real Prometheus telemetry for the dashboard.
++
++Nothing here generates or simulates data: every value comes from a Prometheus response. The
++functions only parse, align and summarise, so they can be unit-tested without a server.
++"""
++
++from __future__ import annotations
++
++import math
++from typing import Any
++
++from app.services.prometheus_client import HOST_QUERIES
++
++# The five model-input metrics reuse the exact production queries, so the charts show what the
++# host model will actually see. Two extra display-only series add context.
++HOST_HISTORY_QUERIES: dict[str, str] = {
++    **HOST_QUERIES,
++    "load1": "sum(node_load1)",
++    "root_disk_used_pct": (
++        '100 * (1 - max(node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"}) '
++        '/ max(node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"}))'
++    ),
++}
++
++MAX_POINTS = 240
++MIN_STEP_SECONDS = 15
++
++
++def pick_step(minutes: int) -> int:
++    """Smallest step (>= scrape interval) that keeps the response under MAX_POINTS."""
++    return max(MIN_STEP_SECONDS, math.ceil(minutes * 60 / MAX_POINTS / MIN_STEP_SECONDS) * MIN_STEP_SECONDS)
++
++
++def matrix_to_map(payload: dict[str, Any]) -> dict[float, float]:
++    """Turn a Prometheus query_range response for a single-series query into {timestamp: value}.
++
++    Raises ValueError on an unsuccessful response or when the query matched several series.
++    Non-finite samples (NaN/Inf) are dropped rather than turned into zero.
++    """
++    if payload.get("status") != "success":
++        raise ValueError(str(payload.get("error", "Prometheus returned an unsuccessful query")))
++    result = payload.get("data", {}).get("result", [])
++    if len(result) > 1:
++        raise ValueError("query returned several series")
++    if not result:
++        return {}
++    out: dict[float, float] = {}
++    for ts, raw in result[0].get("values", []):
++        value = float(raw)
++        if math.isfinite(value):
++            out[float(ts)] = value
++    return out
++
++
++def merge_points(series: dict[str, dict[float, float]]) -> list[dict[str, float | None]]:
++    """Align several {timestamp: value} maps on a shared time axis. Missing values stay None."""
++    timestamps = sorted({ts for values in series.values() for ts in values})
++    return [{"t": ts, **{name: values.get(ts) for name, values in series.items()}} for ts in timestamps]
++
++
++def latest_values(points: list[dict[str, float | None]], names: list[str]) -> dict[str, float | None]:
++    """Most recent non-missing value per metric."""
++    latest: dict[str, float | None] = dict.fromkeys(names)
++    for point in reversed(points):
++        for name in names:
++            if latest[name] is None and point.get(name) is not None:
++                latest[name] = point[name]
++        if all(v is not None for v in latest.values()):
++            break
++    return latest
++
++
++def summarize_coverage(payload: dict[str, Any], step_seconds: int) -> dict[str, Any]:
++    """How much real host telemetry Prometheus holds, from an `up` query_range response.
++
++    A bucket counts as covered only when the exporter reported up == 1 for it.
++    """
++    samples = matrix_to_map(payload)
++    covered = sorted(ts for ts, value in samples.items() if value >= 1)
++    return {
++        "first_sample": covered[0] if covered else None,
++        "last_sample": covered[-1] if covered else None,
++        "covered_hours": round(len(covered) * step_seconds / 3600, 1),
++    }
++
++
++def parse_alerts(payload: dict[str, Any]) -> list[dict[str, Any]]:
++    """Reduce Prometheus /api/v1/alerts to the fields the dashboard shows, firing first."""
++    if payload.get("status") != "success":
++        raise ValueError(str(payload.get("error", "Prometheus returned an unsuccessful query")))
++    order = {"firing": 0, "pending": 1}
++    rows = []
++    for alert in payload.get("data", {}).get("alerts", []):
++        labels = alert.get("labels", {})
++        rows.append({
++            "name": labels.get("alertname", "unknown"),
++            "state": alert.get("state", "unknown"),
++            "severity": labels.get("severity", "none"),
++            "scope": labels.get("scope"),
++            "source": labels.get("source"),
++            "summary": alert.get("annotations", {}).get("summary", ""),
++            "active_at": alert.get("activeAt"),
++            "value": alert.get("value"),
++        })
++    return sorted(rows, key=lambda r: (order.get(r["state"], 2), r["name"]))
+diff --git a/docker-compose.yml b/docker-compose.yml
+index efa09f3..9f35447 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -26,6 +26,39 @@ services:
+       - artifacts:/srv/artifacts
+       - ./training-data:/srv/training-data:ro
+     restart: "no"
++  # Opt-in: turn stored real telemetry + confirmed incidents (scripts/annotate_incident.py) into
++  # training-data/<scope>.csv.gz. Refuses to write a file without enough confirmed incidents.
++  # Usage: docker compose --profile training run --rm build-training-data --scope host
++  build-training-data:
++    profiles: [ "training" ]
++    build: { context: ., dockerfile: docker/Dockerfile, target: trainer }
++    image: predictiveops-trainer:local
++    environment: *app-env
++    entrypoint: [ "python", "scripts/build_training_data.py" ]
++    command: [ "--scope", "host" ]
++    volumes:
++      - artifacts:/srv/artifacts
++      - ./training-data:/srv/training-data
++    restart: "no"
++
++  # Opt-in: train the SYNTHETIC demo model that powers the dashboard's labelled simulation.
++  # It is rejected for production inference and never affects /ready.
++  # Usage: docker compose --profile demo run --build --rm demo-model
++  demo-model:
++    profiles: [ "demo" ]
++    build: { context: ., dockerfile: docker/Dockerfile, target: trainer }
++    image: predictiveops-trainer:local
++    environment: *app-env
++    command:
++      - sh
++      - -c
++      - >-
++        python scripts/generate_data.py --days 14 --series 4 --seed 42 --out /tmp/synthetic.csv.gz &&
++        python scripts/train.py --data /tmp/synthetic.csv.gz --scope combined
++        --model-root /srv/artifacts/models --no-mlflow --promote
++    volumes: [ "artifacts:/srv/artifacts" ]
++    restart: "no"
++
+   api:
+     build: { context: ., dockerfile: docker/Dockerfile, target: runtime }
+     image: predictiveops-runtime:local
+diff --git a/docs/production-telemetry.md b/docs/production-telemetry.md
+index 4736d79..274b477 100644
+--- a/docs/production-telemetry.md
++++ b/docs/production-telemetry.md
+@@ -69,3 +69,17 @@ remains available for development and CI, but synthetic scores are not productio
+   the action path has been tested against a disposable target and reviewed.
+ - Model buffers and latest predictions must be persisted or explicitly treated as ephemeral;
+   in-memory state is not durable across API restarts.
++
++## Building training data from your own host
++
++The API stores every polled sample in `telemetry_samples`. To turn that into a training file:
++
++1. Record each real incident with `scripts/annotate_incident.py add ...` (start, end, category, evidence).
++2. Run `docker compose --profile training run --rm build-training-data --scope host`. A minute is
++   `is_unhealthy` only inside a confirmed incident window; the file is written with
++   `data_source=production`. The script refuses to write when there are too few confirmed incidents.
++3. Run the trainer (`docker compose --profile training run --build --rm trainer`). The model is
++   promoted only if it passes the quality gates; then `/ready` clears for that scope.
++
++The dashboard's synthetic simulation is a separate, opt-in demo: `docker compose --profile demo run
++--build --rm demo-model`. It never affects production readiness.
+diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
+index be1d553..22d59f0 100644
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -53,6 +53,32 @@ function App() {
+   const [simulation, setSimulation] = useState<AnyRecord | null>(null);
+   const [simulationLoading, setSimulationLoading] = useState(false);
+   const [simulationError, setSimulationError] = useState<string | null>(null);
++  const [rangeMinutes, setRangeMinutes] = useState(60);
++  const [history, setHistory] = useState<AnyRecord | null>(null);
++  const [infraAlerts, setInfraAlerts] = useState<AnyRecord | null>(null);
++  const [coverage, setCoverage] = useState<AnyRecord | null>(null);
++
++  const refreshLive = useCallback(async () => {
++    const [nextHistory, nextAlerts, nextCoverage] = await Promise.all([
++      get(`/v1/host/history?minutes=${rangeMinutes}`).catch(() => null),
++      get("/v1/infra/alerts").catch(() => null),
++      get("/v1/telemetry/coverage").catch(() => null),
++    ]);
++    setHistory(nextHistory);
++    setInfraAlerts(nextAlerts);
++    setCoverage(nextCoverage);
++  }, [rangeMinutes]);
++
++  useEffect(() => {
++    void refreshLive();
++    const timer = window.setInterval(() => void refreshLive(), 10000);
++    return () => window.clearInterval(timer);
++  }, [refreshLive]);
++
++  const historyData = useMemo(
++    () => (history?.points ?? []).map((point: AnyRecord) => ({ ...point, time: point.t * 1000 })),
++    [history],
++  );
+ 
+   const runSimulation = useCallback(async () => {
+     setSimulationLoading(true);
+@@ -195,7 +221,7 @@ function App() {
+           <div className="breadcrumbs"><span>Workspace</span><ChevronRight size={14}/><b>{page}</b></div>
+           <div className="top-actions">
+             <div className="live-indicator"><i/>API {data.health?.status === "ok" ? "online" : "unavailable"}</div>
+-            <button className="icon-button" onClick={() => void refresh()} title="Refresh data" disabled={refreshing}><RefreshCw size={16} className={refreshing ? "spin" : ""}/></button>
++            <button className="icon-button" onClick={() => { void refresh(); void refreshLive(); }} title="Refresh data" disabled={refreshing}><RefreshCw size={16} className={refreshing ? "spin" : ""}/></button>
+             <div className="avatar">PO</div>
+           </div>
+         </header>
+@@ -207,7 +233,7 @@ function App() {
+           </div>
+ 
+           {data.errors.length > 0 && <div className="notice warning"><AlertTriangle size={16}/><div><b>Some API endpoints could not be loaded</b><span>{data.errors.join(" · ")}</span></div></div>}
+-          {!isReady && data.ready?.reason && <div className="notice warning"><ShieldAlert size={16}/><div><b>Production inference is blocked</b><span>{data.ready.reason}. The API will not publish predictions from an unqualified model.</span></div></div>}
++          {!isReady && data.ready?.reason && <div className="notice warning"><ShieldAlert size={16}/><div><b>Production inference is blocked</b><span>{data.ready.reason}. The API will not publish predictions from an unqualified model. To enable live predictions: collect host telemetry, record real incidents, build training data and train (see Predictions › Real telemetry collected).</span></div></div>}
+ 
+           {page === "Overview" && <>
+             <section className="stat-grid">
+@@ -216,6 +242,33 @@ function App() {
+               <StatCard icon={<Bell/>} label="RECENT ALERTS" value={String(alertCount)} detail="Latest 50 records" tone={alertCount ? "amber" : "green"}/>
+               <StatCard icon={<Zap/>} label="PROMETHEUS" value={sourceHealth} detail={sourceDetail} tone={sourceHealth === "Healthy" ? "green" : "amber"}/>
+             </section>
++            <section className="panel full-panel">
++              <PanelTitle
++                title="Live host telemetry"
++                subtitle={`Real Prometheus data${history?.series_id ? " from " + history.series_id : ""} · the same queries the host model reads · refreshed every 10 seconds`}
++              />
++              <div className="range-tabs" role="group" aria-label="Time range">
++                {RANGES.map(([minutes, label]) => (
++                  <button key={minutes} type="button" className={rangeMinutes === minutes ? "range-tab active" : "range-tab"} onClick={() => setRangeMinutes(minutes)}>{label}</button>
++                ))}
++              </div>
++              {history?.available ? (
++                <div className="metric-grid">
++                  <MetricChart title="CPU utilisation" unit="%" data={historyData} latest={history.latest} domain={[0, 100]} series={[{ key: "cpu_pct", name: "CPU", color: "#5c96ff" }]}/>
++                  <MetricChart title="Memory used" unit="%" data={historyData} latest={history.latest} domain={[0, 100]} series={[{ key: "memory_pct", name: "Memory", color: "#45c49a" }]}/>
++                  <MetricChart title="Disk I/O utilisation" unit="%" data={historyData} latest={history.latest} domain={[0, 100]} series={[{ key: "disk_io_util_pct", name: "Disk I/O", color: "#e8b45b" }]}/>
++                  <MetricChart title="Network (physical NICs)" unit=" Mbps" data={historyData} latest={history.latest} series={[{ key: "network_rx_mbps", name: "Receive", color: "#5c96ff" }, { key: "network_tx_mbps", name: "Transmit", color: "#f07878" }]}/>
++                  <MetricChart title="Load average (1m)" unit="" data={historyData} latest={history.latest} series={[{ key: "load1", name: "Load", color: "#b794f6" }]}/>
++                  <MetricChart title="Root filesystem used" unit="%" data={historyData} latest={history.latest} domain={[0, 100]} series={[{ key: "root_disk_used_pct", name: "Root disk", color: "#f0a36b" }]}/>
++                </div>
++              ) : (
++                <EmptyState icon={<Activity/>} title="No host telemetry yet" text={history?.error ? `Prometheus query failed: ${history.error}` : "Waiting for Node Exporter samples from Prometheus."}/>
++              )}
++            </section>
++            <section className="panel full-panel">
++              <PanelTitle title="Infrastructure alerts" subtitle="Pending and firing Prometheus alerts, including the static-threshold safety net"/>
++              <InfraAlerts data={infraAlerts}/>
++            </section>
+             <section className="content-grid">
+               <div className="panel risk-panel">
+                 <PanelTitle
+@@ -278,11 +331,8 @@ function App() {
+           </>}
+ 
+           {page === "Predictions" && <>
+-            <section className="panel full-panel">
+-              <PanelTitle
+-                title="Predictive failure simulation"
+-                subtitle="Run the calibrated HGB model against a controlled fault scenario"
+-              />
++            <details className="panel full-panel demo-details">
++              <summary><b>Synthetic simulation</b><span>Demo only · generated scenarios, not a live forecast · click to expand</span></summary>
+               <div className="notice warning" style={{marginBottom:18}}>
+                 <ShieldAlert size={17}/>
+                 <div>
+@@ -319,7 +369,7 @@ function App() {
+                 <span style={{fontSize:12,color:"#8491a4"}}>360 minutes · 20-minute prediction horizon · fixed seed 42</span>
+               </div>
+ 
+-              {simulationError && <div className="notice warning"><AlertTriangle size={16}/><div><b>Simulation request failed</b><span>{simulationError}</span></div></div>}
++              {simulationError && <div className="notice warning"><AlertTriangle size={16}/><div><b>Simulation request failed</b><span>{simulationError}{/unavailable/i.test(simulationError) ? " · Train the synthetic demo model once on the server: docker compose --profile demo run --build --rm demo-model" : ""}</span></div></div>}
+ 
+               {!simulation && !simulationLoading && !simulationError && (
+                 <EmptyState icon={<Gauge/>} title="No simulation run yet" text="Select a fault scenario and run the HGB inference pipeline to inspect predicted failure probabilities."/>
+@@ -382,6 +432,16 @@ function App() {
+                   Synthetic data · Model {simulation.model_version} · Scenario start {time(simulation.start)} · {simulation.minutes} samples
+                 </div>
+               </>}
++            </details>
++
++            <section className="panel full-panel">
++              <PanelTitle title="Real telemetry collected" subtitle="What Prometheus holds for this host today, the raw material for training on real data"/>
++              {coverage?.available ? <>
++                <Detail label="Collection started" value={coverage.first_sample ? time(new Date(coverage.first_sample * 1000).toISOString()) : "No samples yet"}/>
++                <Detail label="Hours with host telemetry" value={`${coverage.covered_hours} h (last ${coverage.window_days} days)`}/>
++                <Detail label="Latest sample" value={coverage.last_sample ? time(new Date(coverage.last_sample * 1000).toISOString()) : "—"}/>
++                <div className="model-note"><ShieldAlert size={15}/><span>Telemetry alone cannot train the model. Label real incidents (see scripts/annotate_incident.py and docs/production-telemetry.md), export with scripts/export_telemetry.py, then run the trainer. Until both scope models pass the gates, live assessments below stay blocked.</span></div>
++              </> : <EmptyState icon={<Clock3/>} title="Coverage unavailable" text={coverage?.error ?? "Could not read Prometheus coverage."}/>}
+             </section>
+ 
+             <section className="panel full-panel">
+@@ -403,7 +463,7 @@ function App() {
+             </section>
+             <section className="container-grafana-link"><span>Historical container trends, filesystem I/O and network charts</span><a href={"http://" + window.location.hostname + ":3000/d/predictiveops/predictiveops"} target="_blank" rel="noreferrer">Open infrastructure dashboard <ExternalLink size={13}/></a></section>
+           </>}
+-          {page === "Alerts & audit" && <section className="content-grid stacked-panels"><div className="panel"><PanelTitle title="Recent alerts" subtitle="Policy-generated service alerts"/><RecordTable rows={data.alerts} empty="No alert records returned."/></div><div className="panel"><PanelTitle title="Remediation audit" subtitle="Executed, dry-run, blocked and skipped decisions"/><RecordTable rows={data.audit} empty="No remediation decisions recorded."/></div></section>}
++          {page === "Alerts & audit" && <section className="content-grid stacked-panels"><div className="panel"><PanelTitle title="Infrastructure alerts" subtitle="Pending and firing Prometheus alerts"/><InfraAlerts data={infraAlerts}/></div><div className="panel"><PanelTitle title="Recent alerts" subtitle="Policy-generated service alerts"/><RecordTable rows={data.alerts} empty="No alert records returned."/></div><div className="panel"><PanelTitle title="Remediation audit" subtitle="Executed, dry-run, blocked and skipped decisions"/><RecordTable rows={data.audit} empty="No remediation decisions recorded."/></div></section>}
+ 
+           <footer className="footer"><span>PredictiveOps <b>·</b> Reliability intelligence</span><span>Refresh interval 10s <b>·</b> {loading ? "Connecting…" : "API snapshot loaded"}</span></footer>
+         </div>
+@@ -412,6 +472,50 @@ function App() {
+   );
+ }
+ 
++const RANGES = [[15, "15m"], [60, "1h"], [360, "6h"], [1440, "24h"]] as const;
++const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
++
++type MetricSeries = { key: string; name: string; color: string };
++function MetricChart({ title, unit, data, latest, series, domain }: {
++  title: string; unit: string; data: AnyRecord[]; latest: AnyRecord | undefined;
++  series: MetricSeries[]; domain?: [number, number];
++}) {
++  const now = series.map(item => {
++    const value = latest?.[item.key];
++    return typeof value === "number" ? `${value.toFixed(1)}${unit}` : "—";
++  }).join(" · ");
++  return (
++    <div className="metric-card">
++      <div className="metric-head"><span>{title}</span><b>{now}</b></div>
++      <div className="metric-chart">
++        <ResponsiveContainer width="100%" height="100%">
++          <AreaChart data={data} margin={{ top: 6, right: 8, left: -18, bottom: 0 }}>
++            <CartesianGrid stroke="#202a39" vertical={false}/>
++            <XAxis dataKey="time" type="number" scale="time" domain={["dataMin", "dataMax"]} tickFormatter={clock} tick={{ fill: "#8491a4", fontSize: 9 }} axisLine={false} tickLine={false} minTickGap={36}/>
++            <YAxis domain={domain ?? [0, "auto"]} tick={{ fill: "#8491a4", fontSize: 9 }} axisLine={false} tickLine={false}/>
++            <Tooltip
++              contentStyle={{ background: "#111925", border: "1px solid #2a3749", borderRadius: 9, color: "#e7edf6", fontSize: 11 }}
++              labelFormatter={value => new Date(Number(value)).toLocaleString()}
++              formatter={(value, name) => [typeof value === "number" ? `${value.toFixed(2)}${unit}` : "—", name]}
++            />
++            {series.map(item => (
++              <Area key={item.key} type="monotone" dataKey={item.key} name={item.name} stroke={item.color} fill={item.color} fillOpacity={0.14} strokeWidth={1.6} dot={false} connectNulls={false} isAnimationActive={false}/>
++            ))}
++          </AreaChart>
++        </ResponsiveContainer>
++      </div>
++    </div>
++  );
++}
++function InfraAlerts({ data }: { data: AnyRecord | null }) {
++  if (!data) return <EmptyState icon={<AlertTriangle/>} title="Alert status unavailable" text="The API could not reach Prometheus for alert state."/>;
++  if (data.available === false) return <EmptyState icon={<AlertTriangle/>} title="Alert status unavailable" text={data.error ?? "Prometheus did not answer."}/>;
++  const rows: AnyRecord[] = data.alerts ?? [];
++  if (!rows.length) return <EmptyState icon={<CheckCircle2/>} title="No pending or firing alerts" text="All Prometheus alert rules are currently inactive."/>;
++  return <div className="table-scroll"><table><thead><tr><th>ALERT</th><th>STATE</th><th>SEVERITY</th><th>SCOPE</th><th>SUMMARY</th><th>ACTIVE SINCE</th></tr></thead><tbody>{rows.map((row, i) => (
++    <tr key={`${row.name}-${i}`}><td><span className="service-name">{row.name}</span></td><td><span className={`status-pill ${row.state === "firing" ? "danger" : "warning"}`}>{row.state}</span></td><td>{row.severity}</td><td>{row.scope ?? "—"}</td><td>{row.summary || "—"}</td><td>{time(row.active_at)}</td></tr>
++  ))}</tbody></table></div>;
++}
+ function StatCard({icon,label,value,detail,tone}:{icon:ReactNode;label:string;value:string;detail:string;tone:string}) {
+   return <div className="stat-card"><div className={`stat-icon ${tone}`}>{icon}</div><div className="stat-label">{label}</div><div className="stat-value">{value}</div><div className="stat-detail">{detail}</div></div>;
+ }
+diff --git a/frontend/src/styles.css b/frontend/src/styles.css
+index e44ca97..7200d04 100644
+--- a/frontend/src/styles.css
++++ b/frontend/src/styles.css
+@@ -10,3 +10,22 @@
+ .container-grafana-link a:hover{color:#c4d9ff}
+ .container-summary .stat-detail{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ @media(max-width:700px){.container-grafana-link{align-items:flex-start;flex-direction:column}.container-grafana-link a{white-space:normal}.container-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
++
++/* Live host telemetry */
++.range-tabs{display:inline-flex;gap:4px;margin-bottom:14px;padding:3px;border:1px solid var(--line);border-radius:8px;background:#0c121b}
++.range-tab{border:0;background:transparent;color:#8a98ab;font-size:10px;font-weight:700;padding:6px 12px;border-radius:6px}
++.range-tab:hover{color:#dce5f2}
++.range-tab.active{background:#172945;color:#83b1ff}
++.metric-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
++.metric-card{background:#0f1621;border:1px solid var(--line);border-radius:9px;padding:12px 12px 6px;min-width:0}
++.metric-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:10px;color:#8794a7;margin-bottom:6px}
++.metric-head b{font-size:13px;color:#e7edf6;font-weight:650}
++.metric-chart{height:130px;width:100%}
++@media(max-width:1100px){.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
++@media(max-width:700px){.metric-grid{grid-template-columns:1fr}}
++
++/* Collapsible synthetic demo */
++.demo-details>summary{display:flex;align-items:baseline;gap:12px;cursor:pointer;list-style:none;font-size:13px}
++.demo-details>summary::-webkit-details-marker{display:none}
++.demo-details>summary span{font-size:10px;color:#7e8ba0}
++.demo-details[open]>summary{margin-bottom:16px}
+diff --git a/scripts/build_training_data.py b/scripts/build_training_data.py
+new file mode 100644
+index 0000000..2264bdb
+--- /dev/null
++++ b/scripts/build_training_data.py
+@@ -0,0 +1,112 @@
++#!/usr/bin/env python
++"""Build a real-data training file from stored telemetry and confirmed incident annotations.
++
++Joins ``telemetry_samples`` (collected by the API poller) with the ``incidents`` table written by
++``scripts/annotate_incident.py``. A minute is ``is_unhealthy`` only when it falls inside a confirmed,
++non-retracted incident for the same series. Nothing is inferred or simulated: no incidents means no
++positive labels, and the script refuses to write a file that training could not use.
++
++Example (inside the stack):
++    docker compose --profile training run --rm build-training-data --scope host
++"""
++
++from __future__ import annotations
++
++import argparse
++import sqlite3
++import sys
++from pathlib import Path
++
++import pandas as pd
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++
++from app.core.domain import SCOPE_METRIC_COLUMNS  # noqa: E402
++
++DATA_SOURCE = "production"
++
++
++def load_telemetry(db: sqlite3.Connection, scope: str, series_id: str | None) -> pd.DataFrame:
++    metrics = SCOPE_METRIC_COLUMNS[scope]
++    query = f"SELECT series_id, timestamp, {', '.join(metrics)} FROM telemetry_samples WHERE scope = ?"
++    params: list[str] = [scope]
++    if series_id:
++        query += " AND series_id = ?"
++        params.append(series_id)
++    df = pd.read_sql_query(query + " ORDER BY series_id, timestamp", db, params=params)
++    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, format="ISO8601")
++    return df
++
++
++def load_incidents(db: sqlite3.Connection) -> pd.DataFrame:
++    exists = db.execute(
++        "SELECT name FROM sqlite_master WHERE type='table' AND name='incidents'").fetchone()
++    if not exists:
++        return pd.DataFrame(columns=["series_id", "started_at", "ended_at"])
++    df = pd.read_sql_query(
++        "SELECT series_id, started_at, ended_at FROM incidents WHERE status = 'confirmed'", db)
++    for col in ("started_at", "ended_at"):
++        df[col] = pd.to_datetime(df[col], utc=True, format="ISO8601")
++    return df
++
++
++def label_unhealthy(telemetry: pd.DataFrame, incidents: pd.DataFrame) -> pd.Series:
++    """True for samples inside a confirmed incident window of the same series (inclusive start)."""
++    labels = pd.Series(False, index=telemetry.index)
++    for incident in incidents.itertuples():
++        inside = ((telemetry["series_id"] == incident.series_id)
++                  & (telemetry["timestamp"] >= incident.started_at)
++                  & (telemetry["timestamp"] < incident.ended_at))
++        labels |= inside
++    return labels
++
++
++def main(argv: list[str] | None = None) -> int:
++    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
++    ap.add_argument("--scope", required=True, choices=("host", "application"))
++    ap.add_argument("--db", type=Path, default=Path("/srv/artifacts/predictiveops.sqlite"))
++    ap.add_argument("--series-id", help="restrict to one series (default: all in the scope)")
++    ap.add_argument("--out", type=Path, default=None,
++                    help="default: /srv/training-data/<scope>.csv.gz")
++    ap.add_argument("--min-incidents", type=int, default=3,
++                    help="refuse to write fewer distinct incident windows than this (default 3)")
++    args = ap.parse_args(argv)
++
++    if not args.db.exists():
++        raise SystemExit(f"Telemetry database not found: {args.db}")
++    out = args.out or Path(f"/srv/training-data/{args.scope}.csv.gz")
++
++    with sqlite3.connect(args.db) as db:
++        telemetry = load_telemetry(db, args.scope, args.series_id)
++        incidents = load_incidents(db)
++    if args.series_id:
++        incidents = incidents[incidents["series_id"] == args.series_id]
++    incidents = incidents[incidents["series_id"].isin(telemetry["series_id"].unique())]
++
++    if telemetry.empty:
++        raise SystemExit(f"No {args.scope} telemetry stored yet. Let the API poll for a while first.")
++    telemetry["is_unhealthy"] = label_unhealthy(telemetry, incidents)
++    telemetry["data_source"] = DATA_SOURCE
++    telemetry["timestamp"] = telemetry["timestamp"].dt.tz_convert("UTC").dt.tz_localize(None)
++
++    positives = int(telemetry["is_unhealthy"].sum())
++    print(f"Scope: {args.scope}")
++    print(f"Samples: {len(telemetry)} across {telemetry['series_id'].nunique()} series "
++          f"({telemetry['timestamp'].min()} to {telemetry['timestamp'].max()} UTC)")
++    print(f"Confirmed incident windows: {len(incidents)}  |  unhealthy minutes: {positives}")
++
++    if len(incidents) < args.min_incidents or positives == 0:
++        raise SystemExit(
++            f"Refusing to write {out}: need at least {args.min_incidents} confirmed incident windows "
++            "covered by stored telemetry. Record real incidents with scripts/annotate_incident.py. "
++            "Training also needs unhealthy minutes in the train, validation and test splits.")
++
++    out.parent.mkdir(parents=True, exist_ok=True)
++    cols = ["timestamp", "series_id", *SCOPE_METRIC_COLUMNS[args.scope], "is_unhealthy", "data_source"]
++    telemetry[cols].to_csv(out, index=False)
++    print(f"Wrote {out}")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tests/integration/test_api_history.py b/tests/integration/test_api_history.py
+new file mode 100644
+index 0000000..e20ecae
+--- /dev/null
++++ b/tests/integration/test_api_history.py
+@@ -0,0 +1,52 @@
++import httpx
++from fastapi.testclient import TestClient
++
++from app.api.main import create_app
++from app.api.routers import history
++from app.core.config import Settings
++
++
++def _client(monkeypatch, handler):
++    monkeypatch.setattr(
++        history, "prometheus_client",
++        lambda base_url: httpx.AsyncClient(base_url="http://prom", transport=httpx.MockTransport(handler)))
++    return TestClient(create_app(Settings(_env_file=None, log_level="WARNING"), None, load_model=False))
++
++
++def test_host_history_returns_aligned_real_points(monkeypatch):
++    def handler(request):
++        return httpx.Response(200, json={"status": "success", "data": {"result": [
++            {"values": [[1000, "10"], [1015, "20"]]}]}})
++    with _client(monkeypatch, handler) as c:
++        body = c.get("/v1/host/history?minutes=15").json()
++    assert body["available"] is True
++    assert len(body["points"]) == 2
++    assert body["latest"]["cpu_pct"] == 20.0
++
++
++def test_host_history_degrades_when_prometheus_is_down(monkeypatch):
++    def handler(request):
++        raise httpx.ConnectError("down")
++    with _client(monkeypatch, handler) as c:
++        body = c.get("/v1/host/history").json()
++    assert body["available"] is False and body["points"] == [] and body["error"]
++
++
++def test_host_history_validates_window(monkeypatch):
++    with _client(monkeypatch, lambda r: httpx.Response(200, json={})) as c:
++        assert c.get("/v1/host/history?minutes=1").status_code == 422
++
++
++def test_infra_alerts_and_coverage(monkeypatch):
++    def handler(request):
++        if request.url.path == "/api/v1/alerts":
++            return httpx.Response(200, json={"status": "success", "data": {"alerts": [
++                {"labels": {"alertname": "HostCpuWarning", "severity": "warning"}, "state": "firing",
++                 "annotations": {"summary": "cpu"}}]}})
++        return httpx.Response(200, json={"status": "success", "data": {"result": [
++            {"values": [[3600, "1"], [7200, "1"]]}]}})
++    with _client(monkeypatch, handler) as c:
++        alerts = c.get("/v1/infra/alerts").json()
++        cov = c.get("/v1/telemetry/coverage").json()
++    assert alerts["firing"] == 1 and alerts["alerts"][0]["name"] == "HostCpuWarning"
++    assert cov["available"] is True and cov["covered_hours"] == 2.0
+diff --git a/tests/unit/test_build_training_data.py b/tests/unit/test_build_training_data.py
+new file mode 100644
+index 0000000..94e4d1d
+--- /dev/null
++++ b/tests/unit/test_build_training_data.py
+@@ -0,0 +1,52 @@
++import sqlite3
++
++import pytest
++
++from scripts import build_training_data as btd
++
++
++def _db_with(samples, incidents):
++    db = sqlite3.connect(":memory:")
++    db.execute("""CREATE TABLE telemetry_samples (scope TEXT, series_id TEXT, timestamp TEXT,
++        cpu_pct REAL, memory_pct REAL, disk_io_util_pct REAL, network_rx_mbps REAL, network_tx_mbps REAL,
++        request_rate_rps REAL, latency_p95_ms REAL, error_rate REAL, ingestion_source TEXT)""")
++    db.execute("""CREATE TABLE incidents (series_id TEXT, started_at TEXT, ended_at TEXT, status TEXT)""")
++    db.executemany("INSERT INTO telemetry_samples VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", samples)
++    db.executemany("INSERT INTO incidents VALUES (?,?,?,?)", incidents)
++    return db
++
++
++def _row(series, minute):
++    return ("host", series, f"2026-01-01T00:{minute:02d}:00+00:00", 1, 2, 3, 4, 5, 0, 0, 0, "t")
++
++
++def test_only_confirmed_incident_windows_are_labelled():
++    samples = [_row("h", m) for m in range(10)] + [_row("other", m) for m in range(10)]
++    incidents = [("h", "2026-01-01T00:03:00+00:00", "2026-01-01T00:05:00+00:00", "confirmed"),
++                 ("h", "2026-01-01T00:08:00+00:00", "2026-01-01T00:09:00+00:00", "retracted")]
++    db = _db_with(samples, incidents)
++    telemetry = btd.load_telemetry(db, "host", None)
++    labels = btd.label_unhealthy(telemetry, btd.load_incidents(db))
++    flagged = telemetry[labels]
++    assert list(flagged["series_id"].unique()) == ["h"]
++    assert [t.minute for t in flagged["timestamp"]] == [3, 4]
++
++
++def test_no_incidents_means_no_positive_labels():
++    db = _db_with([_row("h", m) for m in range(5)], [])
++    telemetry = btd.load_telemetry(db, "host", None)
++    assert not btd.label_unhealthy(telemetry, btd.load_incidents(db)).any()
++
++
++def test_refuses_to_write_without_enough_incidents(tmp_path):
++    path = tmp_path / "p.sqlite"
++    db = sqlite3.connect(path)
++    db.execute("""CREATE TABLE telemetry_samples (scope TEXT, series_id TEXT, timestamp TEXT,
++        cpu_pct REAL, memory_pct REAL, disk_io_util_pct REAL, network_rx_mbps REAL, network_tx_mbps REAL,
++        request_rate_rps REAL, latency_p95_ms REAL, error_rate REAL, ingestion_source TEXT)""")
++    db.execute("INSERT INTO telemetry_samples VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", _row("h", 0))
++    db.commit(); db.close()
++    out = tmp_path / "host.csv.gz"
++    with pytest.raises(SystemExit):
++        btd.main(["--scope", "host", "--db", str(path), "--out", str(out)])
++    assert not out.exists()
+diff --git a/tests/unit/test_host_history.py b/tests/unit/test_host_history.py
+new file mode 100644
+index 0000000..f87dda8
+--- /dev/null
++++ b/tests/unit/test_host_history.py
+@@ -0,0 +1,54 @@
++import pytest
++
++from app.services import host_history as h
++
++
++def _matrix(values):
++    return {"status": "success", "data": {"result": [{"values": values}]}}
++
++
++def test_pick_step_caps_points():
++    for minutes in (5, 15, 60, 360, 1440):
++        step = h.pick_step(minutes)
++        assert step >= h.MIN_STEP_SECONDS
++        assert minutes * 60 / step <= h.MAX_POINTS
++
++
++def test_matrix_to_map_drops_non_finite_and_keeps_floats():
++    assert h.matrix_to_map(_matrix([[1, "1.5"], [2, "NaN"], [3, "2"]])) == {1.0: 1.5, 3.0: 2.0}
++
++
++def test_matrix_to_map_rejects_errors_and_ambiguity():
++    with pytest.raises(ValueError):
++        h.matrix_to_map({"status": "error", "error": "boom"})
++    with pytest.raises(ValueError):
++        h.matrix_to_map({"status": "success", "data": {"result": [{}, {}]}})
++
++
++def test_empty_result_is_empty_map_not_zeros():
++    assert h.matrix_to_map({"status": "success", "data": {"result": []}}) == {}
++
++
++def test_merge_keeps_missing_values_missing():
++    points = h.merge_points({"a": {1: 1, 2: 2}, "b": {2: 5, 3: 6}})
++    assert points[0] == {"t": 1, "a": 1, "b": None}
++    assert points[2] == {"t": 3, "a": None, "b": 6}
++    assert h.latest_values(points, ["a", "b"]) == {"a": 2, "b": 6}
++
++
++def test_coverage_counts_only_up_buckets():
++    cov = h.summarize_coverage(_matrix([[3600, "1"], [7200, "0"], [10800, "1"]]), 3600)
++    assert cov == {"first_sample": 3600.0, "last_sample": 10800.0, "covered_hours": 2.0}
++
++
++def test_alerts_sorted_firing_first():
++    payload = {"status": "success", "data": {"alerts": [
++        {"labels": {"alertname": "B", "severity": "warning"}, "state": "pending", "annotations": {}},
++        {"labels": {"alertname": "A"}, "state": "firing", "annotations": {"summary": "s"}},
++    ]}}
++    assert [a["name"] for a in h.parse_alerts(payload)] == ["A", "B"]
++
++
++def test_history_queries_include_all_host_model_inputs():
++    from app.core.domain import HOST_METRIC_COLUMNS
++    assert set(HOST_METRIC_COLUMNS) <= set(h.HOST_HISTORY_QUERIES)

@@ -10,3 +10,16 @@
 .container-grafana-link a:hover{color:#c4d9ff}
 .container-summary .stat-detail{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:700px){.container-grafana-link{align-items:flex-start;flex-direction:column}.container-grafana-link a{white-space:normal}.container-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Live host telemetry */
+.range-tabs{display:inline-flex;gap:4px;margin-bottom:14px;padding:3px;border:1px solid var(--line);border-radius:8px;background:#0c121b}
+.range-tab{border:0;background:transparent;color:#8a98ab;font-size:10px;font-weight:700;padding:6px 12px;border-radius:6px}
+.range-tab:hover{color:#dce5f2}
+.range-tab.active{background:#172945;color:#83b1ff}
+.metric-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.metric-card{background:#0f1621;border:1px solid var(--line);border-radius:9px;padding:12px 12px 6px;min-width:0}
+.metric-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:10px;color:#8794a7;margin-bottom:6px}
+.metric-head b{font-size:13px;color:#e7edf6;font-weight:650}
+.metric-chart{height:130px;width:100%}
+@media(max-width:1100px){.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.metric-grid{grid-template-columns:1fr}}
