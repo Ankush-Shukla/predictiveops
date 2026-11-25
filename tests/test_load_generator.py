@@ -1,6 +1,7 @@
 # ruff: noqa: E501, E701, E702, E401, I001
 import pytest
-from pydantic import ValidationError\nfrom fastapi import HTTPException
+from pydantic import ValidationError
+from fastapi import HTTPException
 from app.services.load_generator import LoadJob, verify_internal_token
 
 def test_accepts_private_docker_ipv4():
