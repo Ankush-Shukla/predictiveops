@@ -64,6 +64,21 @@ function App() {
   const [opsError, setOpsError] = useState<string | null>(null);
   const [stressRun, setStressRun] = useState<AnyRecord | null>(null);
   const [stressBusy, setStressBusy] = useState(false);
+  const [loadTargets, setLoadTargets] = useState<AnyRecord[]>([]);
+  const [loadTargetId, setLoadTargetId] = useState("");
+  const [loadPort, setLoadPort] = useState(8000);
+  const [loadPath, setLoadPath] = useState("/health");
+  const [loadConcurrency, setLoadConcurrency] = useState(5);
+  const [loadRate, setLoadRate] = useState(10);
+  const [loadDuration, setLoadDuration] = useState(30);
+  const [loadWarningLatency, setLoadWarningLatency] = useState(500);
+  const [loadCriticalLatency, setLoadCriticalLatency] = useState(1500);
+  const [loadWarningErrors, setLoadWarningErrors] = useState(2);
+  const [loadCriticalErrors, setLoadCriticalErrors] = useState(10);
+  const [loadJob, setLoadJob] = useState<AnyRecord | null>(null);
+  const [loadBusy, setLoadBusy] = useState(false);
+  const [logsPaused, setLogsPaused] = useState(false);
+  const [logSearch, setLogSearch] = useState("");
 
   const refreshLive = useCallback(async () => {
     const [nextHistory, nextAlerts, nextCoverage] = await Promise.all([
@@ -157,6 +172,75 @@ function App() {
       window.alert(error instanceof Error ? error.message : String(error));
     } finally { setStressBusy(false); }
   }, [stressMaxUsers, stressDuration]);
+
+
+  useEffect(() => {
+    if (page !== "Live logs" || !selectedLogContainer || logsPaused) return;
+    const source = new EventSource(`/v1/ops/containers/${selectedLogContainer}/logs/stream?tail=100`);
+    source.onmessage = event => {
+      try {
+        const item = JSON.parse(event.data);
+        if (item.line) setLiveLogs(previous => [...previous.split("\n"), item.line].slice(-3000).join("\n"));
+        if (item.error) setLiveLogs(previous => previous + "\n[stream error] " + item.error);
+      } catch { /* ignore malformed stream frames */ }
+    };
+    return () => source.close();
+  }, [page, selectedLogContainer, logsPaused]);
+
+  useEffect(() => {
+    if (page !== "Load testing") return;
+    let cancelled = false;
+    void get("/v1/ops/load-tests/targets").then(result => {
+      if (cancelled) return;
+      const targets: AnyRecord[] = result.targets ?? [];
+      setLoadTargets(targets);
+      if (!loadTargetId || !targets.some(target => target.id === loadTargetId)) {
+        const preferred = targets.find(target => target.service === "api") ?? targets[0];
+        setLoadTargetId(preferred?.id ?? "");
+        setLoadPort(preferred?.service === "api" ? 8000 : preferred?.ports?.[0] ?? 8000);
+      }
+    }).catch(error => { if (!cancelled) setOpsError(error instanceof Error ? error.message : String(error)); });
+    return () => { cancelled = true; };
+  }, [page]);
+
+  useEffect(() => {
+    if (!loadJob?.job_id || !["queued", "running"].includes(loadJob.status)) return;
+    const timer = window.setInterval(async () => {
+      try { setLoadJob(await get(`/v1/ops/load-tests/${loadJob.job_id}`)); }
+      catch { /* retain last known run state */ }
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [loadJob?.job_id, loadJob?.status]);
+
+  const startLoadTest = useCallback(async () => {
+    if (!loadTargetId) return;
+    setLoadBusy(true);
+    try {
+      const response = await fetch("/v1/ops/load-tests", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          container_id: loadTargetId, port: loadPort, path: loadPath,
+          concurrency: loadConcurrency, request_rate: loadRate, duration_seconds: loadDuration,
+          warning_latency_ms: loadWarningLatency, critical_latency_ms: loadCriticalLatency,
+          warning_error_rate: loadWarningErrors / 100, critical_error_rate: loadCriticalErrors / 100
+        })
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body?.detail ?? "Could not start application load test");
+      setLoadJob(body);
+    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
+    finally { setLoadBusy(false); }
+  }, [loadTargetId, loadPort, loadPath, loadConcurrency, loadRate, loadDuration, loadWarningLatency, loadCriticalLatency, loadWarningErrors, loadCriticalErrors]);
+
+  const cancelLoadTest = useCallback(async () => {
+    if (!loadJob?.job_id) return;
+    try {
+      const response = await fetch(`/v1/ops/load-tests/${loadJob.job_id}/cancel`, { method: "POST" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body?.detail ?? "Could not cancel load test");
+      setLoadJob(previous => previous ? { ...previous, status: "cancelling" } : previous);
+    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
+  }, [loadJob?.job_id]);
 
   const historyData = useMemo(
     () => (history?.points ?? []).map((point: AnyRecord) => ({ ...point, time: point.t * 1000 })),
@@ -257,6 +341,7 @@ function App() {
           <button className={page === "Containers" ? "nav-item active" : "nav-item"} onClick={() => activePage("Containers")}><Server size={17}/>Containers<span className="nav-count">{containerCount}</span></button>
           <button className={page === "Crash reports" ? "nav-item active" : "nav-item"} onClick={() => activePage("Crash reports")}><FileText size={17}/>Crash reports<span className="nav-count">{incidents.length}</span></button>
           <button className={page === "Live logs" ? "nav-item active" : "nav-item"} onClick={() => activePage("Live logs")}><ScrollText size={17}/>Live logs</button>
+          <button className={page === "Load testing" ? "nav-item active" : "nav-item"} onClick={() => activePage("Load testing")}><Gauge size={17}/>Application load test</button>
           <button className={page === "Alerts & audit" ? "nav-item active" : "nav-item"} onClick={() => activePage("Alerts & audit")}><Bell size={17}/>Alerts & audit<span className="nav-count">{alertCount}</span></button>
         </nav>
         <div className="nav-label monitoring-label">MONITORING</div>
@@ -434,14 +519,41 @@ function App() {
             <IncidentTable rows={incidents}/>
           </section>}
           {page === "Live logs" && <section className="panel full-panel">
-            <PanelTitle title="Live container logs" subtitle="Refreshes automatically every five seconds"/>
+            <PanelTitle title="Live container logs" subtitle="Docker log stream · server-sent events"/>
             <div className="log-toolbar">
               <select value={selectedLogContainer} onChange={event => void loadContainerLogs(event.target.value)}>
                 {managedContainers.map(container => <option key={container.id} value={container.id}>{container.name} · {container.status}</option>)}
               </select>
-              <button className="secondary-action" onClick={() => selectedLogContainer && void loadContainerLogs(selectedLogContainer)}><RefreshCw size={13}/>Refresh logs</button>
+              <input aria-label="Search logs" placeholder="Filter log lines…" value={logSearch} onChange={event => setLogSearch(event.target.value)}/>
+              <button className="secondary-action" onClick={() => setLogsPaused(value => !value)}>{logsPaused ? "Resume stream" : "Pause stream"}</button>
+              <button className="secondary-action" onClick={() => selectedLogContainer && void loadContainerLogs(selectedLogContainer)}><RefreshCw size={13}/>Reload tail</button>
             </div>
-            <pre className="live-log-output">{liveLogs || "No log output available for this container."}</pre>
+            <pre className="live-log-output">{(logSearch ? liveLogs.split("\n").filter(line => line.toLowerCase().includes(logSearch.toLowerCase())).join("\n") : liveLogs) || "No log output available for this container."}</pre>
+          </section>}
+          {page === "Load testing" && <section className="panel full-panel stress-panel">
+            <PanelTitle title="Application HTTP load test" subtitle="Generate bounded traffic against a running managed Compose service"/>
+            <div className="stress-config">
+              <label>TARGET CONTAINER<select value={loadTargetId} onChange={event => { const target = loadTargets.find(item => item.id === event.target.value); setLoadTargetId(event.target.value); setLoadPort(target?.service === "api" ? 8000 : target?.ports?.[0] ?? 8000); }}>
+                {loadTargets.map(target => <option key={target.id} value={target.id}>{target.service} · {target.name}</option>)}</select></label>
+              <label>HTTP PORT<select value={loadPort} onChange={event => setLoadPort(Number(event.target.value))}>{(loadTargets.find(target => target.id === loadTargetId)?.ports ?? []).map((port: number) => <option key={port} value={port}>{port}</option>)}</select></label>
+              <label>PATH<input value={loadPath} onChange={event => setLoadPath(event.target.value)} maxLength={512}/></label>
+              <label>CONCURRENCY<input type="number" min={1} max={100} value={loadConcurrency} onChange={event => setLoadConcurrency(Math.max(1, Math.min(100, Number(event.target.value) || 1)))}/></label>
+              <label>REQUESTS / SECOND<input type="number" min={1} max={100} value={loadRate} onChange={event => setLoadRate(Math.max(1, Math.min(100, Number(event.target.value) || 1)))}/></label>
+              <label>DURATION (SECONDS)<input type="number" min={5} max={300} value={loadDuration} onChange={event => setLoadDuration(Math.max(5, Math.min(300, Number(event.target.value) || 5)))}/></label>
+              <label>WARNING P95 (MS)<input type="number" min={1} value={loadWarningLatency} onChange={event => setLoadWarningLatency(Math.max(1, Number(event.target.value) || 1))}/></label>
+              <label>CRITICAL P95 (MS)<input type="number" min={1} value={loadCriticalLatency} onChange={event => setLoadCriticalLatency(Math.max(1, Number(event.target.value) || 1))}/></label>
+              <label>WARNING ERROR RATE (%)<input type="number" min={0} max={100} value={loadWarningErrors} onChange={event => setLoadWarningErrors(Math.max(0, Math.min(100, Number(event.target.value) || 0)))}/></label>
+              <label>CRITICAL ERROR RATE (%)<input type="number" min={0} max={100} value={loadCriticalErrors} onChange={event => setLoadCriticalErrors(Math.max(0, Math.min(100, Number(event.target.value) || 0)))}/></label>
+              <button className="primary-action" onClick={() => void startLoadTest()} disabled={loadBusy || !loadTargetId || ["queued","running"].includes(loadJob?.status)}><Play size={14}/>{loadBusy ? "Starting…" : "Start HTTP load test"}</button>
+              {["queued","running"].includes(loadJob?.status) && <button className="secondary-action" onClick={() => void cancelLoadTest()}>Cancel test</button>}
+            </div>
+            <p className="stress-help">Only running containers in the PredictiveOps Compose project are eligible. Target IPs are discovered from a private Docker network shared with the isolated generator. Arbitrary hostnames, external URLs, redirects, and non-project containers are rejected. Limits: 100 concurrent requests, 100 requests/second, 5 minutes, 0.5 CPU and 256 MB RAM for the generator.</p>
+            {loadJob && <div className="stress-result"><span className={loadJob.capacity_level >= 2 ? "status-pill danger" : loadJob.capacity_level === 1 ? "status-pill warning" : loadJob.status === "running" ? "status-pill warning" : "status-pill success"}>{String(loadJob.status).toUpperCase()}</span>
+              <b>{loadJob.service ?? "Service"} · {loadJob.completed_requests ?? 0} requests · {loadJob.failed_requests ?? 0} errors</b>
+              {loadJob.latency_ms && <span>Latency p50 / p95 / p99: {loadJob.latency_ms.p50 ?? "—"} / {loadJob.latency_ms.p95 ?? "—"} / {loadJob.latency_ms.p99 ?? "—"} ms</span>}
+              {loadJob.error_rate !== undefined && <span>Error rate {Number(loadJob.error_rate * 100).toFixed(2)}% · Throughput {loadJob.requests_per_second} req/s</span>}
+              {loadJob.capacity_level !== undefined && <span>Capacity status: {loadJob.capacity_level === 2 ? "Critical" : loadJob.capacity_level === 1 ? "Warning" : "Within configured thresholds"}</span>}
+            </div>}
           </section>}
           {page === "Alerts & audit" && <section className="content-grid stacked-panels"><div className="panel"><PanelTitle title="Infrastructure alerts" subtitle="Pending and firing Prometheus alerts, including stress-test capacity events"/><InfraAlerts data={infraAlerts}/></div><div className="panel"><PanelTitle title="Recent alerts" subtitle="Policy alerts and recorded stress-test capacity warnings"/><RecordTable rows={data.alerts} empty="No alert records returned."/></div><div className="panel"><PanelTitle title="Remediation audit" subtitle="Container actions, stress-test lifecycle, and executed, dry-run, blocked or failed decisions"/><RecordTable rows={data.audit} empty="No remediation decisions recorded."/></div></section>}
 
@@ -586,7 +698,7 @@ function ManagedContainerTable({rows,onAction,onLogs}:{rows:AnyRecord[];onAction
     <td><span className={`status-pill ${row.status === "running" ? "success" : "danger"}`}>{row.status}</span></td>
     <td>{row.exit_code ?? "—"}{row.oom_killed ? " · OOM" : ""}</td>
     <td className="container-actions"><button onClick={()=>onLogs(row.id)} title="View logs"><Terminal size={13}/>Logs</button>
-      {row.can_control && <>{row.status !== "running" && <button onClick={()=>onAction(row.id,"start")} title="Start"><Play size={13}/>Start</button>}{row.status === "running" && <><button onClick={()=>onAction(row.id,"restart")} title="Restart"><RotateCcw size={13}/>Restart</button><button onClick={()=>onAction(row.id,"stop")} title="Stop"><Square size={12}/>Stop</button><button className="danger-action" onClick={()=>onAction(row.id,"kill")} title="Kill"><Skull size={13}/>Kill</button></>}</>}
+      {row.can_control && <>{row.status !== "running" && row.status !== "paused" && <button onClick={()=>onAction(row.id,"start")} title="Start"><Play size={13}/>Start</button>}{row.status === "running" && <><button onClick={()=>onAction(row.id,"pause")} title="Pause"><Square size={12}/>Pause</button><button onClick={()=>onAction(row.id,"restart")} title="Restart"><RotateCcw size={13}/>Restart</button><button onClick={()=>onAction(row.id,"stop")} title="Stop"><Square size={12}/>Stop</button><button className="danger-action" onClick={()=>onAction(row.id,"kill")} title="Kill"><Skull size={13}/>Kill</button></>}{row.status === "paused" && <button onClick={()=>onAction(row.id,"unpause")} title="Resume"><Play size={13}/>Resume</button>}</>}
       {!row.can_control && <span className="container-id">API protected</span>}
     </td></tr>)}</tbody></table></div>;
 }

@@ -329,7 +329,7 @@ def managed_containers():
                 "id": c.id, "short_id": c.short_id, "name": c.name, "service": service,
                 "status": c.status, "created": c.attrs.get("Created"),
                 "exit_code": st.get("ExitCode"), "oom_killed": bool(st.get("OOMKilled")),
-                "error": st.get("Error") or "", "can_control": service != "api",
+                "error": st.get("Error") or "", "can_control": service not in {"api", "prometheus", "load-generator"},
             })
         return {"available": True, "containers": sorted(items, key=lambda x: x["name"])}
     except DockerException as exc:
@@ -337,13 +337,13 @@ def managed_containers():
 
 
 @router.post("/containers/{container_id}/{action}")
-def container_action(container_id: str, action: str):
-    if action not in {"start", "restart", "stop", "kill"}:
-        raise HTTPException(status_code=400, detail="Action must be start, restart, stop, or kill")
+def container_action(container_id: str, action: str, state: ApiState = Depends(get_state)):
+    if action not in {"start", "restart", "stop", "kill", "pause", "unpause"}:
+        raise HTTPException(status_code=400, detail="Action must be start, restart, stop, kill, pause, or unpause")
     _, container = _find_container(container_id)
     service = container.labels.get("com.docker.compose.service")
-    if service == "api":
-        raise HTTPException(status_code=409, detail="The API container cannot control itself")
+    if service in {"api", "prometheus", "load-generator"}:
+        raise HTTPException(status_code=409, detail="Core control-plane containers are protected")
     try:
         if action == "start":
             container.start()
@@ -351,8 +351,19 @@ def container_action(container_id: str, action: str):
             container.restart(timeout=5)
         elif action == "stop":
             container.stop(timeout=5)
-        else:
+        elif action == "kill":
             container.kill()
+        elif action == "pause":
+            container.pause()
+        else:
+            container.unpause()
+        state.store.add_audit(
+            ts=datetime.now(UTC), series_id=f"container:{container.id[:12]}",
+            action=f"container_{action}", target=container.name, outcome=action,
+            dry_run=False, probability=None, model_version=None,
+            reason="Manual container action from PredictiveOps console",
+            details={"service": service, "container_id": container.id},
+        )
         log.info(
             "container action",
             extra={"container": container.name, "service": service, "action": action},

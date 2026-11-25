@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.errors import register_error_handlers
 from app.api.poller import PrometheusPoller
-from app.api.routers import canary, history, operations, policy, predict, simulate, system
+from app.api.routers import canary, history, load_testing, log_stream, operations, policy, predict, simulate, system
 from app.api.state import ApiState
 from app.core.config import Settings, get_settings
 from app.core.domain import APPLICATION_METRIC_COLUMNS, HOST_METRIC_COLUMNS
@@ -169,6 +169,8 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
 
     app.include_router(system.router)
     app.include_router(operations.router)
+    app.include_router(log_stream.router)
+    app.include_router(load_testing.router)
     app.include_router(history.router)
     app.include_router(predict.router)
     app.include_router(policy.router)
