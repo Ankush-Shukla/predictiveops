@@ -40,6 +40,21 @@ def get_state(request: Request) -> ApiState:
     return request.app.state.api
 
 
+def get_demo_predictor(request: Request) -> Predictor:
+    state = request.app.state.api
+    if state.settings.env == "production":
+        p = state.demo_predictor
+        if p is None:
+            raise ModelNotReadyError("synthetic demonstration model is unavailable")
+        metadata = p.bundle.metadata
+        if metadata.get("data_source") != "synthetic":
+            raise ModelNotReadyError("demo endpoint requires a synthetic model")
+        if metadata.get("scope", "combined") != "combined":
+            raise ModelNotReadyError("demo endpoint requires the combined-scope model")
+        return p
+    return get_predictor(request)
+
+
 def get_predictor(request: Request) -> Predictor:
     state = request.app.state.api
     p = state.predictor

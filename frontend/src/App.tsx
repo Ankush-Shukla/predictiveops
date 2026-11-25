@@ -49,6 +49,38 @@ function App() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [page, setPage] = useState("Overview");
   const [refreshing, setRefreshing] = useState(false);
+  const [faultType, setFaultType] = useState("memory_leak");
+  const [simulation, setSimulation] = useState<AnyRecord | null>(null);
+  const [simulationLoading, setSimulationLoading] = useState(false);
+  const [simulationError, setSimulationError] = useState<string | null>(null);
+
+  const runSimulation = useCallback(async () => {
+    setSimulationLoading(true);
+    setSimulationError(null);
+    try {
+      const response = await fetch("/v1/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          fault_type: faultType,
+          minutes: 360,
+          fault_start: 150,
+          ramp_minutes: 60,
+          seed: 42,
+          spikes: true
+        })
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.detail ?? `Simulation failed: HTTP ${response.status}`);
+      }
+      setSimulation(body);
+    } catch (error) {
+      setSimulationError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSimulationLoading(false);
+    }
+  }, [faultType]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -129,6 +161,15 @@ function App() {
       memoryMiB: Number((row.memory_bytes / (1024 * 1024)).toFixed(1)),
       cpuCores: Number(row.cpu_cores.toFixed(3)),
     })), [containerRows]);
+  const simulationChartData = useMemo(() => {
+    if (!simulation) return [];
+    return (simulation.probability ?? []).map((probability: number | null, minute: number) => ({
+      minute,
+      probability,
+      threshold: simulation.threshold,
+      unhealthy: simulation.is_unhealthy?.[minute] ? 1 : 0
+    }));
+  }, [simulation]);
   const activePage = (next: string) => setPage(next);
 
   return (
@@ -236,7 +277,118 @@ function App() {
             </section>
           </>}
 
-          {page === "Predictions" && <section className="panel full-panel"><PanelTitle title="Prediction results" subtitle="Model-generated assessments require a production-qualified champion"/><SeriesTable rows={data.series} expanded/></section>}
+          {page === "Predictions" && <>
+            <section className="panel full-panel">
+              <PanelTitle
+                title="Predictive failure simulation"
+                subtitle="Run the calibrated HGB model against a controlled fault scenario"
+              />
+              <div className="notice warning" style={{marginBottom:18}}>
+                <ShieldAlert size={17}/>
+                <div>
+                  <b>SYNTHETIC SIMULATION — NOT A LIVE FAILURE FORECAST</b>
+                  <span>This uses generated scenario data and a model trained on synthetic data. It does not predict the current state of your real containers.</span>
+                </div>
+              </div>
+
+              <div style={{display:"flex",gap:12,alignItems:"end",flexWrap:"wrap",marginBottom:20}}>
+                <label style={{display:"grid",gap:7,color:"#aab6c8",fontSize:12,minWidth:220}}>
+                  FAULT SCENARIO
+                  <select
+                    value={faultType}
+                    onChange={event => setFaultType(event.target.value)}
+                    disabled={simulationLoading}
+                    style={{background:"#111925",color:"#e7edf6",border:"1px solid #2a3749",borderRadius:8,padding:"11px 12px",fontSize:14}}
+                  >
+                    <option value="memory_leak">Memory leak</option>
+                    <option value="latency_creep">Latency creep</option>
+                    <option value="error_ramp">Error rate ramp</option>
+                    <option value="cpu_contention">CPU contention</option>
+                    <option value="disk_saturation">Disk saturation</option>
+                    <option value="none">Healthy baseline</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void runSimulation()}
+                  disabled={simulationLoading}
+                  style={{background:"#3978e8",color:"#fff",border:0,borderRadius:8,padding:"12px 18px",fontWeight:700,cursor:simulationLoading ? "wait" : "pointer",opacity:simulationLoading ? 0.65 : 1}}
+                >
+                  {simulationLoading ? "Running model…" : "Run simulation"}
+                </button>
+                <span style={{fontSize:12,color:"#8491a4"}}>360 minutes · 20-minute prediction horizon · fixed seed 42</span>
+              </div>
+
+              {simulationError && <div className="notice warning"><AlertTriangle size={16}/><div><b>Simulation request failed</b><span>{simulationError}</span></div></div>}
+
+              {!simulation && !simulationLoading && !simulationError && (
+                <EmptyState icon={<Gauge/>} title="No simulation run yet" text="Select a fault scenario and run the HGB inference pipeline to inspect predicted failure probabilities."/>
+              )}
+
+              {simulation && <>
+                <div className="stat-grid" style={{marginBottom:20}}>
+                  <StatCard icon={<Gauge/>} label="PEAK FAILURE PROBABILITY" value={`${(Math.max(0,...simulation.probability.filter((v: number | null): v is number => v !== null))*100).toFixed(1)}%`} detail={`Decision threshold ${(simulation.threshold*100).toFixed(2)}%`} tone="amber"/>
+                  <StatCard icon={<Clock3/>} label="FORECAST HORIZON" value={`${simulation.horizon_minutes} min`} detail={`Model ${simulation.model_version}`} tone="blue"/>
+                  <StatCard icon={<AlertTriangle/>} label="EARLY WARNING" value={simulation.summary.lead_time_minutes == null ? "No detection" : `${simulation.summary.lead_time_minutes} min`} detail="Lead time before simulated failure" tone="green"/>
+                  <StatCard icon={<Activity/>} label="ALERT MINUTES" value={String(simulation.summary.alert_minutes)} detail={`${simulation.summary.false_alert_minutes} false-alert minutes`} tone="amber"/>
+                </div>
+
+                <div className="panel" style={{marginBottom:18}}>
+                  <PanelTitle title="Predicted failure probability" subtitle="Calibrated HGB probability at each simulated minute · dashed line is the decision threshold"/>
+                  <div className="chart-wrap">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={simulationChartData} margin={{top:12,right:16,left:0,bottom:8}}>
+                        <CartesianGrid stroke="#202a39" vertical={false}/>
+                        <XAxis dataKey="minute" tick={{fill:"#8491a4",fontSize:10}} axisLine={false} tickLine={false} label={{value:"Scenario minute",position:"insideBottom",offset:-3,fill:"#8491a4",fontSize:10}}/>
+                        <YAxis domain={[0,1]} tick={{fill:"#8491a4",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v => `${Math.round(v*100)}%`}/>
+                        <Tooltip
+                          contentStyle={{background:"#111925",border:"1px solid #2a3749",borderRadius:9,color:"#e7edf6"}}
+                          labelFormatter={v => `Minute ${v}`}
+                          formatter={(value, name) => [`${(Number(value)*100).toFixed(2)}%`, name === "probability" ? "Failure probability" : "Decision threshold"]}
+                        />
+                        <Legend wrapperStyle={{fontSize:11,color:"#aab6c8"}}/>
+                        <Area type="monotone" dataKey="probability" name="Failure probability" stroke="#4f8cff" fill="#4f8cff" fillOpacity={0.20} strokeWidth={2} connectNulls={false} dot={false}/>
+                        <Line type="monotone" dataKey="threshold" name="Decision threshold" stroke="#e7a94b" strokeWidth={2} strokeDasharray="6 4" dot={false}/>
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="chart-foot">
+                    <span><i className="legend-dot blue"/>Model probability</span>
+                    <span>Threshold: {(simulation.threshold*100).toFixed(2)}%</span>
+                    <span>{simulationChartData.filter((point: AnyRecord) => point.probability !== null).length} scored points</span>
+                  </div>
+                </div>
+
+                <div className="content-grid">
+                  <div className="panel">
+                    <PanelTitle title="Scenario outcome" subtitle="Ground truth from the generated scenario"/>
+                    <Detail label="Scenario" value={faultType.replace(/_/g," ")}/>
+                    <Detail label="Failure onset" value={simulation.summary.failure_start_minute == null ? "No failure injected" : `Minute ${simulation.summary.failure_start_minute}`}/>
+                    <Detail label="First alert" value={simulation.summary.first_alert_minute == null ? "No alert" : `Minute ${simulation.summary.first_alert_minute}`}/>
+                    <Detail label="Lead time" value={simulation.summary.lead_time_minutes == null ? "—" : `${simulation.summary.lead_time_minutes} minutes`}/>
+                    <Detail label="False-alert minutes" value={simulation.summary.false_alert_minutes}/>
+                  </div>
+                  <div className="panel">
+                    <PanelTitle title="Policy replay" subtitle="Isolated in-memory policy engine · forced dry-run"/>
+                    <Detail label="Alert minutes" value={simulation.policy_summary.alert_minutes}/>
+                    <Detail label="False-alert minutes" value={simulation.policy_summary.false_alert_minutes}/>
+                    <Detail label="Sustained alert decisions" value={simulation.policy_summary.sustain_alert}/>
+                    <Detail label="Sustained remediation decisions" value={simulation.policy_summary.sustain_remediate}/>
+                    <Detail label="Would plan remediation" value={simulation.policy_summary.would_remediate_minute == null ? "No" : `Minute ${simulation.policy_summary.would_remediate_minute}`}/>
+                    <div className="model-note"><ShieldCheck size={15}/><span>Dry-run only. No production containers were restarted or modified.</span></div>
+                  </div>
+                </div>
+                <div style={{fontSize:11,color:"#8491a4",marginTop:14}}>
+                  Synthetic data · Model {simulation.model_version} · Scenario start {time(simulation.start)} · {simulation.minutes} samples
+                </div>
+              </>}
+            </section>
+
+            <section className="panel full-panel">
+              <PanelTitle title="Live production assessments" subtitle="Separate from the synthetic simulation above · requires production-qualified scoped models"/>
+              <SeriesTable rows={data.series} expanded/>
+            </section>
+          </>}
           {page === "Containers" && <>
             <section className="stat-grid container-summary">
               <StatCard icon={<Server/>} label="RUNNING CONTAINERS" value={String(containerCount)} detail={data.containerStatus?.available ? "Reporting through cAdvisor" : "Waiting for cAdvisor metrics"} tone="blue"/>

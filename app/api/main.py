@@ -50,6 +50,22 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
                     except PredictiveOpsError as exc:
                         log.warning("scope model unavailable", extra={"scope": scope, "reason": str(exc)})
                 app.state.api.set_scope_predictors(loaded)
+
+                # Isolated model used exclusively by the explicitly labelled demo endpoint.
+                try:
+                    demo = Predictor.from_champion(settings.model_dir)
+                    metadata = demo.bundle.metadata
+                    if (metadata.get("data_source") == "synthetic"
+                            and metadata.get("scope", "combined") == "combined"):
+                        app.state.api.set_demo_predictor(demo)
+                        log.info("synthetic demonstration model loaded",
+                                 extra={"version": demo.version})
+                    else:
+                        log.warning("root model rejected for demo: unexpected provenance or scope")
+                except PredictiveOpsError as exc:
+                    log.warning("synthetic demonstration model unavailable",
+                                extra={"reason": str(exc)})
+
             elif app.state.api.predictor is None:
                 try:
                     app.state.api.set_predictor(Predictor.from_champion(settings.model_dir))
@@ -123,7 +139,9 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
     if settings.env != "production":
         app.include_router(predict.development_router)
         app.include_router(canary.router)
-        app.include_router(simulate.router)
+
+    # Simulation is isolated from production inference and always labelled synthetic.
+    app.include_router(simulate.router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", include_in_schema=False)

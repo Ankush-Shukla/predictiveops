@@ -48,6 +48,7 @@ class Collectors:
 class ApiState:
     settings: Settings
     predictor: Predictor | None
+    demo_predictor: Predictor | None = None
     scope_predictors: dict[str, Predictor] = field(default_factory=dict)
     registry: CollectorRegistry = field(default_factory=CollectorRegistry)
     buffers: dict[str, SeriesBuffer] = field(default_factory=dict)
@@ -76,6 +77,10 @@ class ApiState:
             self.collectors.model_info.labels(version=predictor.version, data_source=data_source).set(1)
             self.collectors.model_scope_info.labels(
                 scope=scope, version=predictor.version, data_source=data_source).set(1)
+
+    def set_demo_predictor(self, predictor: Predictor | None) -> None:
+        # Demonstration-only model. Never register it as a production scope model.
+        self.demo_predictor = predictor
 
     def set_scope_predictors(self, predictors: dict[str, Predictor]) -> None:
         self.scope_predictors = dict(predictors)
