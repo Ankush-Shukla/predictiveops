@@ -12,11 +12,11 @@ import {
 type AnyRecord = Record<string, any>;
 type Snapshot = {
   health: AnyRecord | null; ready: AnyRecord | null; model: AnyRecord | null;
-  sources: AnyRecord | null; series: AnyRecord[]; containers: AnyRecord[]; containerStatus: AnyRecord | null; alerts: AnyRecord[];
+  sources: AnyRecord | null; experimentalPrediction: AnyRecord | null; series: AnyRecord[]; containers: AnyRecord[]; containerStatus: AnyRecord | null; alerts: AnyRecord[];
   audit: AnyRecord[]; policy: AnyRecord | null;
   errors: string[];
 };
-const empty: Snapshot = { health:null, ready:null, model:null, sources:null, series:[], containers:[], containerStatus:null, alerts:[], audit:[], policy:null, errors:[] };
+const empty: Snapshot = { health:null, ready:null, model:null, sources:null, experimentalPrediction:null, series:[], containers:[], containerStatus:null, alerts:[], audit:[], policy:null, errors:[] };
 const get = async (path: string) => {
   const response = await fetch(path, { headers: { Accept: "application/json" } });
   if (!response.ok) {
@@ -86,7 +86,7 @@ function App() {
     setRefreshing(true);
     const endpoints = [
       ["health", "/health"], ["ready", "/ready"], ["model", "/v1/model"],
-      ["sources", "/v1/sources"], ["series", "/v1/series"], ["containerStatus", "/v1/containers"], ["alerts", "/v1/alerts?limit=50"],
+      ["sources", "/v1/sources"], ["experimentalPrediction", "/v1/experimental/host/prediction"], ["series", "/v1/series"], ["containerStatus", "/v1/containers"], ["alerts", "/v1/alerts?limit=50"],
       ["audit", "/v1/audit?limit=50"], ["policy", "/v1/policy"],
     ] as const;
     const results = await Promise.all(endpoints.map(async ([key, path]) => {
@@ -210,6 +210,7 @@ function App() {
           {!isReady && data.ready?.reason && <div className="notice warning"><ShieldAlert size={16}/><div><b>Production inference is blocked</b><span>{data.ready.reason}. The API will not publish predictions from an unqualified model.</span></div></div>}
 
           {page === "Overview" && <>
+            <ExperimentalHostPanel data={data.experimentalPrediction}/>
             <section className="stat-grid">
               <StatCard icon={<ShieldCheck/>} label="MODEL STATUS" value={isReady ? "Ready" : "Not ready"} detail={modelCount ? `Host ${hostModel ? "loaded" : "missing"} · Applications ${applicationModel ? "loaded" : "missing"}` : "Champion model unavailable"} tone={isReady ? "green" : "amber"} />
               <StatCard icon={<Server/>} label="CONTAINERS" value={String(containerCount)} detail="Live cAdvisor resource inventory" tone="blue"/>
@@ -278,6 +279,7 @@ function App() {
           </>}
 
           {page === "Predictions" && <>
+            <ExperimentalHostPanel data={data.experimentalPrediction}/>
             <section className="panel full-panel">
               <PanelTitle
                 title="Predictive failure simulation"
@@ -412,6 +414,68 @@ function App() {
   );
 }
 
+function ExperimentalHostPanel({data}:{data:AnyRecord | null}) {
+  const scored = data?.status === "scored";
+  const history = scored && Array.isArray(data.history)
+    ? data.history.map((point:AnyRecord, minute:number) => ({minute, probability:point.probability, threshold:data.threshold}))
+    : [];
+  const metrics = data?.metrics ?? {};
+  return (
+    <section className="panel full-panel">
+      <PanelTitle title="Live host failure-risk inference" subtitle="Experimental model scoring the latest real host telemetry collected by Prometheus"/>
+      <div className="notice warning">
+        <ShieldAlert size={16}/>
+        <div>
+          <b>SYNTHETIC-TRAINED EXPERIMENTAL MODEL — LIVE HOST INPUTS</b>
+          <span>The model is trained on generated host-fault scenarios and applied to live server metrics. This is a cross-domain experiment, not a production-qualified forecast. It does not create alerts or trigger remediation.</span>
+        </div>
+      </div>
+      {scored ? <>
+        <div className="stat-grid" style={{marginBottom:16}}>
+          <StatCard icon={<Gauge/>} label="CURRENT FAILURE RISK" value={`${(data.probability*100).toFixed(1)}%`} detail={data.predicted_failure ? "Above experimental threshold" : "Below experimental threshold"} tone={data.predicted_failure ? "amber" : "green"}/>
+          <StatCard icon={<Activity/>} label="DECISION THRESHOLD" value={`${(data.threshold*100).toFixed(1)}%`} detail="Synthetic validation threshold" tone="blue"/>
+          <StatCard icon={<Clock3/>} label="FORECAST HORIZON" value={`${data.horizon_minutes} min`} detail="Model prediction window" tone="blue"/>
+          <StatCard icon={<Server/>} label="LIVE HISTORY" value={String(data.buffered_samples)} detail={`${history.length} scored points · 1-minute samples`} tone="green"/>
+        </div>
+        <div className="panel" style={{marginBottom:14}}>
+          <PanelTitle title="Live host risk trend" subtitle="Rolling predictions from buffered host telemetry · dashed line is the model threshold"/>
+          <div className="chart-wrap">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={history} margin={{top:12,right:16,left:0,bottom:8}}>
+                <CartesianGrid stroke="#202a39" vertical={false}/>
+                <XAxis dataKey="minute" tick={{fill:"#8491a4",fontSize:10}} axisLine={false} tickLine={false} label={{value:"Recent scored samples",position:"insideBottom",offset:-3,fill:"#8491a4",fontSize:10}}/>
+                <YAxis domain={[0,1]} tick={{fill:"#8491a4",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v => `${Math.round(v*100)}%`}/>
+                <Tooltip contentStyle={{background:"#111925",border:"1px solid #2a3749",borderRadius:9,color:"#e7edf6"}} labelFormatter={v => `Sample ${v}`} formatter={(value,name) => [`${(Number(value)*100).toFixed(2)}%`,name === "probability" ? "Failure probability" : "Decision threshold"]}/>
+                <Legend wrapperStyle={{fontSize:11,color:"#aab6c8"}}/>
+                <Area type="monotone" dataKey="probability" name="Failure probability" stroke="#4f8cff" fill="#4f8cff" fillOpacity={0.18} strokeWidth={2} dot={false}/>
+                <Line type="monotone" dataKey="threshold" name="Decision threshold" stroke="#e7a94b" strokeWidth={2} strokeDasharray="6 4" dot={false}/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        <div className="content-grid">
+          <div className="panel">
+            <PanelTitle title="Current host metrics" subtitle="Latest sample passed to the experimental model"/>
+            <Detail label="CPU utilization" value={typeof metrics.cpu_pct === "number" ? `${metrics.cpu_pct.toFixed(1)}%` : "—"}/>
+            <Detail label="Memory utilization" value={typeof metrics.memory_pct === "number" ? `${metrics.memory_pct.toFixed(1)}%` : "—"}/>
+            <Detail label="Disk I/O utilization" value={typeof metrics.disk_io_util_pct === "number" ? `${metrics.disk_io_util_pct.toFixed(1)}%` : "—"}/>
+            <Detail label="Network RX" value={typeof metrics.network_rx_mbps === "number" ? `${metrics.network_rx_mbps.toFixed(2)} Mbps` : "—"}/>
+            <Detail label="Network TX" value={typeof metrics.network_tx_mbps === "number" ? `${metrics.network_tx_mbps.toFixed(2)} Mbps` : "—"}/>
+          </div>
+          <div className="panel">
+            <PanelTitle title="Inference metadata" subtitle="Experimental scoring provenance"/>
+            <Detail label="Host series" value={data.series_id}/>
+            <Detail label="Model version" value={data.model_version}/>
+            <Detail label="Model training data" value={data.data_source}/>
+            <Detail label="Required history" value={`${data.required_history_minutes} minutes`}/>
+            <Detail label="Latest scored at" value={time(data.as_of)}/>
+          </div>
+        </div>
+      </> : <EmptyState icon={<Gauge/>} title={data?.status === "model_unavailable" ? "Experimental model not installed" : "Waiting for live host history"} text={data?.status === "warming_up" ? `Buffered ${data.buffered_samples ?? 0} of ${data.required_history_minutes ?? 30} required one-minute samples.` : "Train and install the isolated experimental host model, then wait for Prometheus telemetry to populate the host buffer."}/>}
+      <div className="model-note"><ShieldAlert size={15}/><span>{data?.disclaimer ?? "This experimental prediction is separate from production readiness, live alerts and remediation."}</span></div>
+    </section>
+  );
+}
 function StatCard({icon,label,value,detail,tone}:{icon:ReactNode;label:string;value:string;detail:string;tone:string}) {
   return <div className="stat-card"><div className={`stat-icon ${tone}`}>{icon}</div><div className="stat-label">{label}</div><div className="stat-value">{value}</div><div className="stat-detail">{detail}</div></div>;
 }
