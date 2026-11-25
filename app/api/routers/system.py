@@ -101,13 +101,21 @@ async def containers(state: ApiState = Depends(get_state)) -> dict:
     """Return one live resource snapshot per Docker container from cAdvisor."""
     base_url = state.settings.prometheus_url.rstrip("/")
     expressions = {
-        "cpu_cores": 'sum by (name) (rate(container_cpu_usage_seconds_total{image!="",name!=""}[5m]))',
-        "memory_bytes": 'sum by (name) (container_memory_working_set_bytes{image!="",name!=""})',
+        "cpu_cores": (
+            'sum by (name, container_label_com_docker_compose_service) '
+            '(rate(container_cpu_usage_seconds_total{image!="",name!=""}[5m]))'
+        ),
+        "memory_bytes": (
+            'sum by (name, container_label_com_docker_compose_service) '
+            '(container_memory_working_set_bytes{image!="",name!=""})'
+        ),
         "network_rx_bytes_s": (
-            'sum by (name) (rate(container_network_receive_bytes_total{image!="",name!=""}[5m]))'
+            'sum by (name, container_label_com_docker_compose_service) '
+            '(rate(container_network_receive_bytes_total{image!="",name!=""}[5m]))'
         ),
         "network_tx_bytes_s": (
-            'sum by (name) (rate(container_network_transmit_bytes_total{image!="",name!=""}[5m]))'
+            'sum by (name, container_label_com_docker_compose_service) '
+            '(rate(container_network_transmit_bytes_total{image!="",name!=""}[5m]))'
         ),
     }
     rows: dict[str, dict] = {}
@@ -129,7 +137,7 @@ async def containers(state: ApiState = Depends(get_state)) -> dict:
                     continue
                 row = rows.setdefault(name, {
                     "name": name,
-                    "service": labels.get("container_label_com_docker_compose_service", "—"),
+                    "service": labels.get("container_label_com_docker_compose_service") or name,
                     "cpu_cores": None,
                     "memory_bytes": None,
                     "network_rx_bytes_s": None,

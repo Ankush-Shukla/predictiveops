@@ -13,6 +13,7 @@ from app.policies.actions import LazyDockerExecutor, NoopExecutor
 from app.policies.audit import AuditStore
 from app.policies.engine import PolicyEngine
 from app.services.series_buffer import SeriesBuffer
+from app.services.telemetry_store import TelemetryStore
 
 
 class Collectors:
@@ -54,12 +55,14 @@ class ApiState:
     lock: threading.Lock = field(default_factory=threading.Lock)
     collectors: Collectors = field(init=False)
     store: AuditStore = field(init=False)
+    telemetry_store: TelemetryStore = field(init=False)
     policy: PolicyEngine = field(init=False)
 
     def __post_init__(self) -> None:
         self.collectors = Collectors(self.registry)
         cfg = self.settings.policy_config()
         self.store = AuditStore(self.settings.sqlite_path)
+        self.telemetry_store = TelemetryStore(self.settings.sqlite_path)
         live = cfg.remediation_enabled and not cfg.dry_run
         self.policy = PolicyEngine(cfg, self.store, LazyDockerExecutor() if live else NoopExecutor())
         self.set_predictor(self.predictor)

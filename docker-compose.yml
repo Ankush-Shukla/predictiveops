@@ -56,21 +56,20 @@ services:
     image: prom/prometheus:v3.5.0
     command:
       - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.retention.time=2d
+      - --storage.tsdb.retention.time=30d
       - --web.enable-lifecycle
-      - --config.expand-env
     environment:
       TAILSCALE_IP: ${TAILSCALE_IP:?set TAILSCALE_IP in .env}
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/prometheus.server.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/targets:/etc/prometheus/targets:ro
       - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
       - prometheus-data:/prometheus
-    ports: [ "127.0.0.1:9090:9090" ]
+    ports: [ "127.0.0.1:9091:9090" ]
     restart: unless-stopped
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    image: ghcr.io/google/cadvisor:v0.60.5
     container_name: predictiveops-cadvisor
     command: [ "--docker_only=true", "--housekeeping_interval=15s" ]
     volumes:

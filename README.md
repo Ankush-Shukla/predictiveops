@@ -38,6 +38,7 @@ flowchart LR
 
 More detail (data flow, storage, leakage controls, API contracts): [`docs/architecture.md`](docs/architecture.md).
 Synopsis requirement mapping: [`docs/requirements_traceability.md`](docs/requirements_traceability.md).
+Evaluation methodology and release gates: [`docs/evaluation.md`](docs/evaluation.md).
 
 ## Quick start (no Docker)
 

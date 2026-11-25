@@ -7,7 +7,7 @@ import time
 from datetime import UTC, datetime
 
 from app.api.deps import production_model_block_reason
-from app.api.ingestion import ingest_points
+from app.api.ingestion import collect_points
 from app.api.state import ApiState
 from app.core.logging import get_logger
 from app.models.predictor import Predictor
@@ -28,8 +28,16 @@ class PrometheusPoller:
         self._clock = clock
         self._sample_origin_ts = (self._clock() // self.step) * self.step
         self._sample_origin_dt = datetime.fromtimestamp(self._sample_origin_ts, UTC)
-        self.status: dict[str, dict] = {s: {"last_poll": None, "last_ok": None, "error": None,
-                                            "samples_ingested": 0} for s in services}
+        self.status: dict[str, dict] = {
+            s: {
+                "last_poll": None,
+                "last_ok": None,
+                "error": None,
+                "inference_error": None,
+                "samples_ingested": 0,
+            }
+            for s in services
+        }
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -38,14 +46,12 @@ class PrometheusPoller:
             st = self.status[svc]
             st["last_poll"] = datetime.now(UTC).isoformat(timespec="seconds")
             try:
-                predictor = (self.predictor or self.state.scope_predictors.get(self.scope)
-                             or self.state.predictor)
-                reason = production_model_block_reason(
-                    self.state, predictor, expected_scope=self.scope if self.scope != "combined" else None)
-                if predictor is None or reason is not None:
-                    raise RuntimeError(reason or "no champion model loaded")
-                raw = self.client.fetch_window(svc, end=self._clock(), steps=self.steps,
-                                               step_seconds=self.step)
+                raw = self.client.fetch_window(
+                    svc,
+                    end=self._clock(),
+                    steps=self.steps,
+                    step_seconds=self.step,
+                )
                 df = self.client.to_sample_clock(
                     raw,
                     self.step,
@@ -54,14 +60,55 @@ class PrometheusPoller:
                 )
                 if df.empty:
                     raise RuntimeError("no complete samples returned for this service")
+
                 series_id = svc if self.scope == "combined" else f"{self.scope}:{svc}"
-                res = ingest_points(self.state, predictor, series_id,
-                                    [MetricPoint(**p) for p in frame_to_points(df)])
-                st["samples_ingested"] += res.accepted
+                samples = [MetricPoint(**p) for p in frame_to_points(df)]
+
+                # Determine inference eligibility independently of collection.
+                predictor = (
+                    self.predictor
+                    or self.state.scope_predictors.get(self.scope)
+                    or self.state.predictor
+                )
+                try:
+                    reason = production_model_block_reason(
+                        self.state,
+                        predictor,
+                        expected_scope=self.scope if self.scope != "combined" else None,
+                    )
+                    if predictor is None or reason is not None:
+                        inference_error = reason or "no champion model loaded"
+                        predictor = None
+                    else:
+                        inference_error = None
+                except Exception as exc:
+                    predictor = None
+                    inference_error = f"{type(exc).__name__}: {exc}"
+
+                # Buffering and optional scoring are atomic with respect to
+                # other ingestion requests. Scoring failures do not undo samples.
+                outcome, scoring_error = collect_points(
+                    self.state,
+                    series_id,
+                    samples,
+                    predictor=predictor,
+                )
+
+                st["samples_ingested"] += outcome.accepted
                 st["last_ok"], st["error"] = st["last_poll"], None
-            except Exception as exc:  # a failing source must never stop the poller or the API
+
+                if scoring_error is not None:
+                    inference_error = (
+                        f"{type(scoring_error).__name__}: {scoring_error}"
+                    )
+                st["inference_error"] = inference_error
+
+            except Exception as exc:  # source failures must never stop the poller or API
                 st["error"] = f"{type(exc).__name__}: {exc}"
-                log.warning("prometheus poll failed", extra={"service": svc, "error": st["error"]})
+                log.warning(
+                    "prometheus poll failed",
+                    extra={"service": svc, "error": st["error"]},
+                )
 
     def _loop(self) -> None:
         while not self._stop.is_set():

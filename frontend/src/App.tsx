@@ -5,7 +5,8 @@ import {
   RefreshCw, Server, ShieldCheck, ShieldAlert, Zap,
 } from "lucide-react";
 import {
-  Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, AreaChart, Bar, CartesianGrid, ComposedChart, Legend, Line,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 
 type AnyRecord = Record<string, any>;
@@ -88,23 +89,26 @@ function App() {
     : data.model?.version ? "Version " + data.model.version : "No champion loaded";
   const sourceScopes: [string, AnyRecord][] = Object.entries(prometheus?.scopes ?? {});
   const sourceTargets = sourceScopes.flatMap(([, scope]) => Object.values(scope.services ?? {}) as AnyRecord[]);
-  const healthyTargets = sourceTargets.filter(target => {
+  const configuredTargets = sourceTargets.length
+    ? sourceTargets
+    : Object.values(prometheus?.services ?? {}) as AnyRecord[];
+  const healthyTargets = configuredTargets.filter(target => {
     if (target.error || !target.last_ok) return false;
     const ageMs = Date.now() - new Date(target.last_ok).getTime();
     return Number.isFinite(ageMs) && ageMs <= 180000;
   }).length;
-  const sourceCount = sourceTargets.length || Object.keys(prometheus?.services ?? {}).length;
-  const requiredSourceScopesReady = ["host", "application"].every(scope => {
-    const configured = sourceScopes.find(([name]) => name === scope)?.[1];
-    const targets = Object.values(configured?.services ?? {}) as AnyRecord[];
-    return targets.length > 0 && targets.every(target => {
-      if (target.error || !target.last_ok) return false;
-      const ageMs = Date.now() - new Date(target.last_ok).getTime();
-      return Number.isFinite(ageMs) && ageMs <= 180000;
-    });
-  });
-  const sourceHealth = !prometheus?.enabled ? "Disabled"
-    : requiredSourceScopesReady && healthyTargets === sourceTargets.length ? "Healthy" : "Degraded";
+  const sourceCount = configuredTargets.length;
+  const applicationScopeConfigured = Object.keys(
+    sourceScopes.find(([name]) => name === "application")?.[1]?.services ?? {}
+  ).length > 0;
+  const sourceHealth = prometheus?.enabled !== true ? "Disabled"
+    : sourceCount === 0 ? "Unconfigured"
+    : healthyTargets === sourceCount ? "Healthy" : "Degraded";
+  const sourceDetail = prometheus?.enabled !== true ? "Polling is not enabled"
+    : sourceCount === 0 ? "No targets configured"
+    : `${healthyTargets}/${sourceCount} configured targets healthy${
+        applicationScopeConfigured ? "" : " · Application monitoring not configured"
+      }`;
   const hostModel = scopedModels?.host;
   const applicationModel = scopedModels?.application;
   const serviceCount = data.series.length;
@@ -116,10 +120,15 @@ function App() {
     ? containerRows.reduce((sum, row) => sum + row.memory_bytes, 0) : null;
   const alertCount = data.alerts.length;
   const remediation = data.policy?.config ?? {};
-  const chartData = useMemo(() => data.series.map((item, index) => ({
-    name: item.series_id ?? `Series ${index + 1}`,
-    risk: riskValue(item) === null ? null : Number((riskValue(item)! * 100).toFixed(1)),
-  })).filter(item => item.risk !== null), [data.series]);
+  const containerChartData = useMemo(() => containerRows
+    .filter(row => typeof row.memory_bytes === "number" && typeof row.cpu_cores === "number")
+    .sort((a, b) => b.memory_bytes - a.memory_bytes)
+    .slice(0, 10)
+    .map(row => ({
+      name: row.service ?? row.name,
+      memoryMiB: Number((row.memory_bytes / (1024 * 1024)).toFixed(1)),
+      cpuCores: Number(row.cpu_cores.toFixed(3)),
+    })), [containerRows]);
   const activePage = (next: string) => setPage(next);
 
   return (
@@ -164,13 +173,42 @@ function App() {
               <StatCard icon={<ShieldCheck/>} label="MODEL STATUS" value={isReady ? "Ready" : "Not ready"} detail={modelCount ? `Host ${hostModel ? "loaded" : "missing"} · Applications ${applicationModel ? "loaded" : "missing"}` : "Champion model unavailable"} tone={isReady ? "green" : "amber"} />
               <StatCard icon={<Server/>} label="CONTAINERS" value={String(containerCount)} detail="Live cAdvisor resource inventory" tone="blue"/>
               <StatCard icon={<Bell/>} label="RECENT ALERTS" value={String(alertCount)} detail="Latest 50 records" tone={alertCount ? "amber" : "green"}/>
-              <StatCard icon={<Zap/>} label="PROMETHEUS" value={sourceHealth} detail={prometheus?.enabled ? `${healthyTargets}/${sourceCount} targets reporting` : "Polling is not enabled"} tone={sourceHealth === "Healthy" ? "green" : "amber"}/>
+              <StatCard icon={<Zap/>} label="PROMETHEUS" value={sourceHealth} detail={sourceDetail} tone={sourceHealth === "Healthy" ? "green" : "amber"}/>
             </section>
             <section className="content-grid">
               <div className="panel risk-panel">
-                <PanelTitle title="Service risk snapshot" subtitle="Latest model probability per buffered service" action="PREDICTIONS"/>
-                {chartData.length ? <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData} margin={{top:12,right:8,left:-22,bottom:0}}><defs><linearGradient id="riskFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#4f8cff" stopOpacity={0.32}/><stop offset="100%" stopColor="#4f8cff" stopOpacity={0.02}/></linearGradient></defs><CartesianGrid stroke="#202a39" vertical={false}/><XAxis dataKey="name" tick={{fill:"#8491a4",fontSize:11}} axisLine={false} tickLine={false}/><YAxis domain={[0,100]} tick={{fill:"#8491a4",fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>`${v}%`}/><Tooltip contentStyle={{background:"#111925",border:"1px solid #2a3749",borderRadius:9,color:"#e7edf6"}} formatter={(v)=>[`${v}%`,"Failure probability"]}/><Area type="monotone" dataKey="risk" stroke="#5c96ff" strokeWidth={2.5} fill="url(#riskFill)" connectNulls/></AreaChart></ResponsiveContainer></div> : <EmptyState icon={<Activity/>} title="No scored series yet" text="Once Prometheus polling or metric ingestion supplies enough history, service risk appears here."/>}
-                <div className="chart-foot"><span><i className="legend-dot blue"/>Failure probability</span><span>Model horizon: {primaryModel?.horizon_minutes ?? "—"} min</span></div>
+                <PanelTitle
+                  title="Live container resource usage"
+                  subtitle="Top 10 containers by memory · refreshed every 10 seconds"
+                />
+                {containerChartData.length ? (
+                  <div className="chart-wrap">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={containerChartData} margin={{top:12,right:12,left:0,bottom:8}}>
+                        <CartesianGrid stroke="#202a39" vertical={false}/>
+                        <XAxis dataKey="name" tick={{fill:"#8491a4",fontSize:10}} axisLine={false} tickLine={false}/>
+                        <YAxis yAxisId="memory" tick={{fill:"#8491a4",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v => `${v} MB`}/>
+                        <YAxis yAxisId="cpu" orientation="right" tick={{fill:"#8491a4",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v => `${v}`}/>
+                        <Tooltip
+                          contentStyle={{background:"#111925",border:"1px solid #2a3749",borderRadius:9,color:"#e7edf6"}}
+                          formatter={(value, name) => [
+                            name === "Memory" ? `${value} MiB` : `${value} CPU cores`,
+                            name
+                          ]}
+                        />
+                        <Legend wrapperStyle={{fontSize:11,color:"#aab6c8"}}/>
+                        <Bar yAxisId="memory" dataKey="memoryMiB" name="Memory" fill="#4f8cff" fillOpacity={0.75} radius={[4,4,0,0]}/>
+                        <Line yAxisId="cpu" type="monotone" dataKey="cpuCores" name="CPU" stroke="#36c9a0" strokeWidth={2} dot={{r:3}}/>
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <EmptyState icon={<Activity/>} title="Waiting for container metrics" text="Resource usage will appear when cAdvisor reports container CPU and memory readings."/>
+                )}
+                <div className="chart-foot">
+                  <span><i className="legend-dot blue"/>Memory working set (MiB)</span>
+                  <span>CPU consumption (cores)</span>
+                </div>
               </div>
               <div className="panel model-panel">
                 <PanelTitle title="Model details" subtitle="Independent host and application model metadata"/>
@@ -181,7 +219,7 @@ function App() {
                 <Detail label="Required history" value={primaryModel?.required_history_minutes ? `${primaryModel.required_history_minutes} minutes` : "—"}/>
                 <Detail label="Feature count" value={primaryModel?.n_features ?? "—"}/>
                 <Detail label="Training data" value={primaryModel?.data_source ?? "—"}/>
-                <div className="model-note"><ShieldAlert size={15}/><span>{modelCount ? "Host and application models are isolated; both must pass production gates before readiness." : "Model outputs should be interpreted alongside threshold-based alerts and operational telemetry."}</span></div>
+                <div className="model-note"><ShieldAlert size={15}/><span>{modelCount ? "Host and application models are isolated; both must pass production gates before readiness." : "No production-qualified champion is loaded. Live infrastructure monitoring remains active; predictions are unavailable."}</span></div>
               </div>
             </section>
             <section className="content-grid lower-grid">
@@ -198,7 +236,7 @@ function App() {
             </section>
           </>}
 
-          {page === "Predictions" && <section className="panel full-panel"><PanelTitle title="Prediction results" subtitle="Live series state returned by the model API"/><SeriesTable rows={data.series} expanded/></section>}
+          {page === "Predictions" && <section className="panel full-panel"><PanelTitle title="Prediction results" subtitle="Model-generated assessments require a production-qualified champion"/><SeriesTable rows={data.series} expanded/></section>}
           {page === "Containers" && <>
             <section className="stat-grid container-summary">
               <StatCard icon={<Server/>} label="RUNNING CONTAINERS" value={String(containerCount)} detail={data.containerStatus?.available ? "Reporting through cAdvisor" : "Waiting for cAdvisor metrics"} tone="blue"/>

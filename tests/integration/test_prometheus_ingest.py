@@ -219,8 +219,10 @@ def test_production_poller_refuses_synthetic_model(predictor, tmp_path):
     now = [T0 + 59 * 5]
     pl = poller_for(st, healthy, now)
     pl.poll_once()
-    assert "not trained exclusively" in pl.status["demo-app"]["error"]
-    assert st.buffers == {}
+    assert pl.status["demo-app"]["error"] is None
+    assert "not trained exclusively" in pl.status["demo-app"]["inference_error"]
+    assert pl.status["demo-app"]["samples_ingested"] == 60
+    assert len(st.buffers["demo-app"]) == 60
     assert st.latest == {}
 
 
@@ -260,7 +262,10 @@ def test_poller_survives_failures_and_gaps(predictor, tmp_path):
     nomodel = make_state(None, tmp_path / "x")
     p2 = poller_for(nomodel, healthy, now)
     p2.poll_once()
-    assert "no champion model" in p2.status["demo-app"]["error"]
+    assert p2.status["demo-app"]["error"] is None
+    assert "no champion model" in p2.status["demo-app"]["inference_error"]
+    assert p2.status["demo-app"]["samples_ingested"] == 60
+    assert len(nomodel.buffers["demo-app"]) == 60
 
 
 def test_app_lifecycle_runs_poller_and_exposes_sources(predictor, tmp_path):

@@ -20,7 +20,7 @@ DEFAULT_QUERIES: dict[str, str] = {m: f'avg(demo_{m}{{service="$service"}})' for
 
 HOST_QUERIES: dict[str, str] = {
     "cpu_pct": '100 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100',
-    "memory_pct": '100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)',
+    "memory_pct": '100 * (1 - sum(node_memory_MemAvailable_bytes) / sum(node_memory_MemTotal_bytes))',
     "disk_io_util_pct": '100 * max(rate(node_disk_io_time_seconds_total[5m]))',
     "network_rx_mbps": (
         'sum(rate(node_network_receive_bytes_total{'
