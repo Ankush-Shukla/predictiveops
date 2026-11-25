@@ -77,6 +77,52 @@ def get_predictor_from_state(state: ApiState) -> Predictor:
     return p
 
 
+@router.get("/v1/experimental/host/prediction", tags=["experimental"])
+def experimental_host_prediction(state: ApiState = Depends(get_state)) -> dict:
+    """Score buffered live host telemetry with an isolated synthetic-trained model.
+
+    This endpoint is observational only: it does not update production predictions,
+    alert policy, readiness, or remediation state.
+    """
+    predictor = state.experimental_host_predictor
+    if predictor is None:
+        return {"status": "model_unavailable", "scope": "host",
+                "disclaimer": "No experimental host model is installed."}
+
+    series_id = f"host:{state.settings.prometheus_host_series_id}"
+    with state.lock:
+        buffer = state.buffers.get(series_id)
+        frame = buffer.frame() if buffer is not None else None
+
+    buffered = len(frame) if frame is not None else 0
+    if frame is None or buffered < predictor.required_history:
+        return {
+            "status": "warming_up", "scope": "host", "series_id": series_id,
+            "model_version": predictor.version, "data_source": "synthetic",
+            "buffered_samples": buffered,
+            "required_history_minutes": predictor.required_history,
+            "disclaimer": "Synthetic-trained experimental model; live host telemetry is being buffered.",
+        }
+
+    scored = predictor.predict_recent(frame, buffered - predictor.required_history + 1)
+    if not scored:
+        return {"status": "warming_up", "scope": "host", "series_id": series_id,
+                "buffered_samples": buffered, "required_history_minutes": predictor.required_history}
+    latest = scored[-1]
+    state.collectors.predictions.labels(source="experimental_host").inc(len(scored))
+    return {
+        "status": "scored", "scope": "host", "series_id": series_id,
+        "model_version": latest.model_version, "data_source": "synthetic",
+        "probability": latest.probability, "threshold": latest.threshold,
+        "predicted_failure": latest.predicted_failure,
+        "horizon_minutes": latest.horizon_minutes, "as_of": latest.as_of,
+        "buffered_samples": buffered, "required_history_minutes": predictor.required_history,
+        "history": [{"as_of": item.as_of, "probability": item.probability} for item in scored],
+        "metrics": {name: float(frame.iloc[-1][name]) for name in predictor.metric_columns},
+        "disclaimer": "EXPERIMENTAL: trained on synthetic host-fault scenarios and applied to live host metrics. Not production-qualified; no alerts or remediation are triggered.",
+    }
+
+
 @router.get("/v1/sources", tags=["system"])
 def sources(request: Request) -> dict:
     """Status of every configured Prometheus ingestion scope."""
