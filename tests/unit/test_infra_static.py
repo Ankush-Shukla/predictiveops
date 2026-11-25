@@ -77,7 +77,13 @@ def test_production_api_does_not_auto_train_or_promote_synthetic_models():
 def test_prometheus_scrapes_host_and_discovered_application_targets():
     prom = load("prometheus/prometheus.yml")
     jobs = {j["job_name"]: j for j in prom["scrape_configs"]}
-    assert {"node-exporter", "cadvisor", "applications", "predictiveops-api", "predictiveops-load-generator"} <= set(jobs)
+    assert {
+        "node-exporter",
+        "cadvisor",
+        "applications",
+        "predictiveops-api",
+        "predictiveops-load-generator",
+    } <= set(jobs)
     assert not any("demo" in name for name in jobs)
     env = SVC["api"]["environment"]
     assert env["PREDICTIVEOPS_PROMETHEUS_HOST_SERIES_ID"].endswith(":-home-server}")
