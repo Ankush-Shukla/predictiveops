@@ -594,8 +594,18 @@ function IncidentTable({rows}:{rows:AnyRecord[]}) {
     <span className="incident-meta"><i className={row.oom_killed?"incident-oom":"incident-exit"}/>{row.oom_killed?"OOM killed":`Exit ${row.exit_code ?? "—"}`}</span>
   </button>)}
   {selected && <div className="incident-detail"><div className="incident-detail-head"><b>Incident report · {selected.incident_id}</b><span>{selected.event}</span></div>
-    <div className="incident-facts"><span>Container <b>{selected.container_name}</b></span><span>Exit code <b>{selected.exit_code ?? "—"}</b></span><span>OOM killed <b>{selected.oom_killed?"Yes":"No"}</b></span><span>Error <b>{selected.error || "None reported"}</b></span><span>Started <b>{time(selected.started_at)}</b></span><span>Finished <b>{time(selected.finished_at)}</b></span></div>
-    <pre className="live-log-output">{selected.logs_tail || "No logs captured."}</pre>
+    <div className="incident-diagnosis"><b>DIAGNOSIS</b>{selected.diagnosis || selected.error || (selected.oom_killed ? "Container was killed by the OOM handler." : `Process exited with code ${selected.exit_code ?? "unknown"}.`)}</div>
+    <div className="incident-facts">
+      <span>Container <b>{selected.container_name}</b></span><span>Service <b>{selected.compose_service ?? "—"}</b></span>
+      <span>Exit code <b>{selected.exit_code ?? "—"}</b></span><span>OOM killed <b>{selected.oom_killed?"Yes":"No"}</b></span>
+      <span>Runtime <b>{selected.runtime_seconds == null ? "—" : `${selected.runtime_seconds}s`}</b></span>
+      <span>Restart count <b>{selected.restart_count ?? "—"}</b></span>
+      <span>Image <b>{selected.image ?? "—"}</b></span><span>Error <b>{selected.error || "None reported by Docker"}</b></span>
+      <span>Started <b>{time(selected.started_at)}</b></span><span>Finished <b>{time(selected.finished_at)}</b></span>
+      <span>Captured <b>{time(selected.captured_at)}</b></span><span>Event <b>{selected.event}</b></span>
+    </div>
+    <div className="incident-logs-label">CONTAINER OUTPUT · LAST 250 LINES</div>
+    <pre className="live-log-output">{selected.logs_tail || "No container output was retained. Diagnose using the exit code, OOM status and Docker error above."}</pre>
   </div>}
   </div>;
 }
