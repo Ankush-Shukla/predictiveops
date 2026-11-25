@@ -113,11 +113,18 @@ def _capture_incident(
 
         name = container.name or attributes.get("name") or container_id[:12]
         service = labels.get("com.docker.compose.service")
+        stdout_tail = ""
+        stderr_tail = ""
         try:
-            output = container.logs(
-                tail=250, timestamps=True, stdout=True, stderr=True
-            )
-            logs = output.decode("utf-8", errors="replace").strip()
+            stdout_tail = container.logs(
+                tail=150, timestamps=True, stdout=True, stderr=False
+            ).decode("utf-8", errors="replace").strip()
+            stderr_tail = container.logs(
+                tail=150, timestamps=True, stdout=False, stderr=True
+            ).decode("utf-8", errors="replace").strip()
+            logs = "\n".join(part for part in (
+                "--- STDOUT ---", stdout_tail, "--- STDERR ---", stderr_tail
+            ) if part).strip()
         except (DockerException, OSError) as exc:
             logs = f"Container logs could not be read after exit: {exc}"
         if not logs:
@@ -141,8 +148,19 @@ def _capture_incident(
             )
         elif error:
             diagnosis = f"Docker reported a runtime error: {error}"
+        elif exit_code == 139:
+            diagnosis = "The process likely terminated with SIGSEGV (segmentation fault)."
+        elif exit_code == 127:
+            diagnosis = "The container command was not found (exit code 127). Check the image entrypoint and command."
+        elif exit_code == 126:
+            diagnosis = "The container command could not be executed (exit code 126). Check permissions and executable format."
+        elif exit_code == 143:
+            diagnosis = "The process received SIGTERM. Check whether Docker, an operator or an orchestrator stopped it."
         elif exit_code not in (None, 0):
-            diagnosis = f"The container process exited unsuccessfully with exit code {exit_code}."
+            diagnosis = (
+                f"The container process exited unsuccessfully with exit code {exit_code}. "
+                "Use stderr/stdout, Docker state and resource limits to identify the failing component."
+            )
         elif event == "stress_failure":
             diagnosis = (
                 "A stress-test worker exited before the test completed; this marks "
@@ -171,7 +189,18 @@ def _capture_incident(
             "finished_at": finished,
             "runtime_seconds": round(runtime_seconds, 2) if runtime_seconds is not None else None,
             "restart_count": container.attrs.get("RestartCount", 0),
+            "health": state.get("Health", {}),
+            "resource_limits": {
+                "memory_bytes": container.attrs.get("HostConfig", {}).get("Memory"),
+                "nano_cpus": container.attrs.get("HostConfig", {}).get("NanoCpus"),
+                "cpu_quota": container.attrs.get("HostConfig", {}).get("CpuQuota"),
+                "cpu_period": container.attrs.get("HostConfig", {}).get("CpuPeriod"),
+                "pids_limit": container.attrs.get("HostConfig", {}).get("PidsLimit"),
+            },
+            "restart_policy": container.attrs.get("HostConfig", {}).get("RestartPolicy", {}),
             "captured_at": datetime.now(UTC).isoformat(),
+            "stdout_tail": stdout_tail,
+            "stderr_tail": stderr_tail,
             "logs_tail": logs,
             "docker_event": attributes,
         }
