@@ -246,6 +246,28 @@ def cleanup_orphaned_stress_containers() -> int:
         log.info("removed orphaned stress workers", extra={"count": removed})
     return removed
 
+def recover_interrupted_stress_runs(path: Path, audit) -> int:
+    """Mark database runs interrupted by an API restart and preserve an audit record."""
+    recovered_at = datetime.now(UTC)
+    with _connect(path) as db:
+        rows = db.execute(
+            "SELECT id, users_started FROM stress_runs WHERE status='running'"
+        ).fetchall()
+        db.execute(
+            "UPDATE stress_runs SET status='interrupted', failure=?, finished_at=? "
+            "WHERE status='running'",
+            ("API restarted before the stress test could finish", recovered_at.isoformat()),
+        )
+    for row in rows:
+        audit.add_audit(
+            ts=recovered_at, series_id=f"stress:{row['id']}",
+            action="stress_test_interrupted", target=None, outcome="interrupted",
+            dry_run=True, probability=None, model_version=None,
+            reason="API restarted before the stress test could finish",
+            details={"users_started": row["users_started"]},
+        )
+    return len(rows)
+
 
 class StressRequest(BaseModel):
     max_users: int = Field(default=10, ge=1, le=10)
@@ -341,6 +363,14 @@ def start_stress(request: StressRequest, state: ApiState = Depends(get_state)):
     path = _db_path(state)
     started = datetime.now(UTC).isoformat()
     with _connect(path) as db:
+        active = db.execute(
+            "SELECT id FROM stress_runs WHERE status='running' LIMIT 1"
+        ).fetchone()
+        if active:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Stress test {active['id']} is already running; wait for it to finish.",
+            )
         db.execute("INSERT INTO stress_runs(id,status,max_users,started_at) VALUES(?,?,?,?)",
                    (run_id, "running", request.max_users, started))
     thread = threading.Thread(
