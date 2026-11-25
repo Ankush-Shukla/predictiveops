@@ -93,6 +93,7 @@ services:
         limits:
           cpus: "0.50"
           memory: 256M
+          pids: 64
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2)"]
       interval: 15s
