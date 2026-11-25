@@ -112,7 +112,7 @@ function App() {
   useEffect(() => {
     if (!stressRun?.run_id || stressRun.status !== "running") return;
     const timer = window.setInterval(async () => {
-      try { setStressRun(await get(`/v1/ops/stress/${stressRun.run_id}`)); }
+      try { setStressRun({ ...(await get(`/v1/ops/stress/${stressRun.run_id}`)), run_id: stressRun.run_id }); }
       catch { /* keep the last visible run state */ }
     }, 1500);
     return () => window.clearInterval(timer);
