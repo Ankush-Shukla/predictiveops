@@ -93,36 +93,58 @@ def _capture_incident(
             if event_payload.get("timeNano"):
                 event_timestamp = float(event_payload["timeNano"]) / 1_000_000_000
             else:
-                event_timestamp = float(event_payload["time"]) if event_payload.get("time") else None
-            finished = datetime.fromtimestamp(event_timestamp, UTC).isoformat() if event_timestamp else datetime.now(UTC).isoformat()
+                event_timestamp = (
+                    float(event_payload["time"]) if event_payload.get("time") else None
+                )
+            finished = (
+                datetime.fromtimestamp(event_timestamp, UTC).isoformat()
+                if event_timestamp else datetime.now(UTC).isoformat()
+            )
         started = state.get("StartedAt")
         runtime_seconds = None
-        if started and finished and not started.startswith("0001-") and not finished.startswith("0001-"):
+        if (started and finished and not started.startswith("0001-")
+                and not finished.startswith("0001-")):
             try:
-                runtime_seconds = max(0.0, (datetime.fromisoformat(finished.replace("Z", "+00:00")) -
-                                            datetime.fromisoformat(started.replace("Z", "+00:00"))).total_seconds())
+                finished_dt = datetime.fromisoformat(finished.replace("Z", "+00:00"))
+                started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                runtime_seconds = max(0.0, (finished_dt - started_dt).total_seconds())
             except ValueError:
                 pass
 
         name = container.name or attributes.get("name") or container_id[:12]
         service = labels.get("com.docker.compose.service")
         try:
-            logs = container.logs(tail=250, timestamps=True, stdout=True, stderr=True).decode("utf-8", errors="replace").strip()
+            output = container.logs(
+                tail=250, timestamps=True, stdout=True, stderr=True
+            )
+            logs = output.decode("utf-8", errors="replace").strip()
         except (DockerException, OSError) as exc:
             logs = f"Container logs could not be read after exit: {exc}"
         if not logs:
-            logs = "Docker retained no stdout/stderr lines for this incident. Use exit code, OOM state, Docker error and container metadata below for diagnosis."
+            logs = (
+                "Docker retained no stdout/stderr lines for this incident. Use exit code, "
+                "OOM state, Docker error and container metadata below for diagnosis."
+            )
 
         if oom_killed or exit_code == 137:
-            diagnosis = "The container was terminated by the kernel or Docker due to memory pressure (OOM/SIGKILL)."
+            diagnosis = (
+                "The container was terminated by the kernel or Docker due to memory "
+                "pressure (OOM/SIGKILL)."
+            )
         elif error:
             diagnosis = f"Docker reported a runtime error: {error}"
         elif exit_code not in (None, 0):
             diagnosis = f"The container process exited unsuccessfully with exit code {exit_code}."
         elif event == "stress_failure":
-            diagnosis = "A stress-test worker exited before the test completed; this marks the measured capacity boundary."
+            diagnosis = (
+                "A stress-test worker exited before the test completed; this marks "
+                "the measured capacity boundary."
+            )
         else:
-            diagnosis = "Docker reported a container termination. Review the captured logs and state metadata."
+            diagnosis = (
+                "Docker reported a container termination. Review the captured "
+                "logs and state metadata."
+            )
 
         config = container.attrs.get("Config", {})
         report = {
@@ -323,7 +345,11 @@ def _run_stress(path: Path, run_id: str, max_users: int, duration: int):
                 for active_index, active in enumerate(workers, start=1):
                     active.reload()
                     if active.status != "running":
-                        failure = f"Virtual user {active_index} exited ({active.status}, exit code {active.attrs.get('State', {}).get('ExitCode', 'unknown')})"
+                        exit_code = active.attrs.get("State", {}).get("ExitCode", "unknown")
+                        failure = (
+                            f"Virtual user {active_index} exited ({active.status}, "
+                            f"exit code {exit_code})"
+                        )
                         status = "capacity_reached"
                         _capture_incident(path, active.id, "stress_failure")
                         break
