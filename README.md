@@ -119,8 +119,8 @@ curl -i "http://$TAILSCALE_IP:8000/ready"
 ```
 
 Prometheus scrapes at 15-second intervals; the prediction pipeline samples one-minute
-windows. The host and application models remain separate. The host model must pass production eligibility;
-an application model is additionally required when application targets are configured. The first prediction for a new series
+windows. The host and application models remain separate. Both must pass production
+eligibility checks before readiness becomes healthy. The first prediction for a new series
 requires the model's full contiguous feature history.
 
 | URL | Purpose |
@@ -142,7 +142,7 @@ live remediation until its target allowlist and action path have been reviewed.
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /health`, `GET /ready` | Liveness and readiness; requires host model and application model only when application targets are configured |
+| `GET /health`, `GET /ready` | Liveness and readiness; production requires both qualified scope models |
 | `GET /v1/model` | Model metadata; production returns separate host and application models |
 | `GET /v1/sources` | Prometheus source and per-scope poller status |
 | `GET /v1/live-forecast` | Live 15/30-minute host resource guardrail forecast from Node Exporter telemetry |
