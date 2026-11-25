@@ -71,7 +71,11 @@ services:
       PREDICTIVEOPS_REMEDIATION_ENABLED: ${PREDICTIVEOPS_REMEDIATION_ENABLED:-false}
       PREDICTIVEOPS_DRY_RUN: ${PREDICTIVEOPS_DRY_RUN:-true}
       PREDICTIVEOPS_REMEDIATION_TARGETS: '{}'
-    volumes: [ "artifacts:/srv/artifacts" ]
+    volumes:
+      - artifacts:/srv/artifacts
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-999}"
     restart: unless-stopped
 
   frontend:
