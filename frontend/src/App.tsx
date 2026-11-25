@@ -568,7 +568,7 @@ function ExperimentalHostPanel({ prediction }: { prediction: AnyRecord | null })
             <StatCard
               icon={<Gauge/>}
               label="EXPERIMENTAL SCORE"
-              value={`${(Number(prediction.probability) * 100).toFixed(1)}%`}
+              value={`${(Number(prediction.probability) * 100).toFixed(2)}%`}
               detail={`Threshold ${(Number(prediction.threshold) * 100).toFixed(1)}%`}
               tone="amber"
             />
