@@ -9,11 +9,11 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-import docker
 from docker.errors import APIError, DockerException, NotFound
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+import docker
 from app.api.deps import get_state
 from app.api.state import ApiState
 
