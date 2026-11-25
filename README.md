@@ -146,6 +146,7 @@ live remediation until its target allowlist and action path have been reviewed.
 | `GET /v1/model` | Model metadata; production returns separate host and application models |
 | `GET /v1/sources` | Prometheus source and per-scope poller status |
 | `GET /v1/live-forecast` | Live 15/30-minute host resource guardrail forecast from Node Exporter telemetry |
+| `GET /v1/experimental/host/prediction` | Experimental synthetic-trained scorer for live host telemetry; observational only |
 | `GET /v1/series[/{id}]` | Buffered time series and latest prediction state |
 | `GET /v1/alerts`, `GET /v1/audit`, `GET /v1/policy` | Alert history, audit log and policy state |
 | `GET /metrics` | PredictiveOps Prometheus instrumentation |
@@ -229,6 +230,26 @@ artifact only if everything passes (optional remote MLflow registration through 
 | `scripts` | generate data, train, evaluate, canary smoke, gate report, demo walkthrough |
 | `tests` | `unit/`, `integration/`, `e2e/` |
 | `docs` | architecture, evaluation, traceability, demo guide |
+
+## Experimental synthetic host scorer
+
+The experimental host scorer applies a model trained on synthetic host-fault scenarios to live host telemetry. It is isolated from production host and application champions. It does not affect production readiness, predictions, alerts, policy state, or remediation. Its probability is exploratory and must not be treated as production failure evidence.
+
+Train it explicitly:
+
+```bash
+uv run python scripts/train_experimental_host.py
+```
+
+Defaults: 14 synthetic days, 4 series, seed 42, a 20-minute prediction horizon, and HistGradientBoosting. Options include `--days`, `--series`, `--seed`, `--horizon`, `--model-type`, `--min-f1`, and `--max-fpr`.
+
+The training script restricts its model root to `artifacts/models/experimental-host`. It never promotes to a production champion. The experimental champion pointer changes only when both configured quality gates pass. Failed-gate artifacts are retained for inspection, the previous experimental champion remains unchanged, and the script exits with code 2.
+
+In production mode, the API loads the experimental champion separately and accepts it only when metadata identifies `scope=host` and `data_source=synthetic`.
+
+The endpoint `GET /v1/experimental/host/prediction` returns `model_unavailable` if no experimental champion is installed, `warming_up` while the live host buffer lacks the predictor-required history, or `scored` when a prediction is available. The response includes synthetic provenance, model version, probability, threshold, evaluation gates, and a disclaimer.
+
+This endpoint is observational only. It does not trigger alerts or remediation and does not change production prediction or readiness state. Passing synthetic-data quality gates does not qualify the model for production use.
 
 ## Verification status
 

@@ -66,6 +66,34 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
                     log.warning("synthetic demonstration model unavailable",
                                 extra={"reason": str(exc)})
 
+                # Separate experimental model. Never register it as a production scope.
+                try:
+                    experimental = Predictor.from_champion(
+                        settings.model_dir / "experimental-host"
+                    )
+                    metadata = experimental.bundle.metadata
+                    if (
+                        metadata.get("scope") == "host"
+                        and metadata.get("data_source") == "synthetic"
+                    ):
+                        app.state.api.set_experimental_host_predictor(experimental)
+                        log.info(
+                            "experimental host model loaded",
+                            extra={
+                                "version": experimental.version,
+                                "data_source": "synthetic",
+                            },
+                        )
+                    else:
+                        log.warning(
+                            "experimental host model rejected: unexpected scope or provenance"
+                        )
+                except PredictiveOpsError as exc:
+                    log.warning(
+                        "experimental host model unavailable",
+                        extra={"reason": str(exc)},
+                    )
+
             elif app.state.api.predictor is None:
                 try:
                     app.state.api.set_predictor(Predictor.from_champion(settings.model_dir))

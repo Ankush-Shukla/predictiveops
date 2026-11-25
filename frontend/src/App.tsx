@@ -13,11 +13,12 @@ type AnyRecord = Record<string, any>;
 type Snapshot = {
   health: AnyRecord | null; ready: AnyRecord | null; model: AnyRecord | null;
   liveForecast: AnyRecord | null;
+  experimentalPrediction: AnyRecord | null;
   sources: AnyRecord | null; series: AnyRecord[]; containers: AnyRecord[]; containerStatus: AnyRecord | null; alerts: AnyRecord[];
   audit: AnyRecord[]; policy: AnyRecord | null;
   errors: string[];
 };
-const empty: Snapshot = { health:null, ready:null, model:null, liveForecast:null, sources:null, series:[], containers:[], containerStatus:null, alerts:[], audit:[], policy:null, errors:[] };
+const empty: Snapshot = { health:null, ready:null, model:null, liveForecast:null, experimentalPrediction:null, sources:null, series:[], containers:[], containerStatus:null, alerts:[], audit:[], policy:null, errors:[] };
 const get = async (path: string) => {
   const response = await fetch(path, { headers: { Accept: "application/json" } });
   if (!response.ok) {
@@ -113,7 +114,7 @@ function App() {
     setRefreshing(true);
     const endpoints = [
       ["health", "/health"], ["ready", "/ready"], ["model", "/v1/model"],
-      ["liveForecast", "/v1/live-forecast"], ["sources", "/v1/sources"], ["series", "/v1/series"], ["containerStatus", "/v1/containers"], ["alerts", "/v1/alerts?limit=50"],
+      ["liveForecast", "/v1/live-forecast"], ["experimentalPrediction", "/v1/experimental/host/prediction"], ["sources", "/v1/sources"], ["series", "/v1/series"], ["containerStatus", "/v1/containers"], ["alerts", "/v1/alerts?limit=50"],
       ["audit", "/v1/audit?limit=50"], ["policy", "/v1/policy"],
     ] as const;
     const results = await Promise.all(endpoints.map(async ([key, path]) => {
@@ -271,6 +272,7 @@ function App() {
               <InfraAlerts data={infraAlerts}/>
             </section>
             <LiveForecastPanel forecast={data.liveForecast}/>
+            <ExperimentalHostPanel prediction={data.experimentalPrediction}/>
             <section className="content-grid">
               <div className="panel risk-panel">
                 <PanelTitle
@@ -334,6 +336,7 @@ function App() {
 
           {page === "Predictions" && <>
             <LiveForecastPanel forecast={data.liveForecast}/>
+            <ExperimentalHostPanel prediction={data.experimentalPrediction}/>
             <section className="panel full-panel">
               <PanelTitle
                 title="Predictive failure simulation"
@@ -521,6 +524,105 @@ function InfraAlerts({ data }: { data: AnyRecord | null }) {
   return <div className="table-scroll"><table><thead><tr><th>ALERT</th><th>STATE</th><th>SEVERITY</th><th>SCOPE</th><th>SUMMARY</th><th>ACTIVE SINCE</th></tr></thead><tbody>{rows.map((row, i) => (
     <tr key={`${row.name}-${i}`}><td><span className="service-name">{row.name}</span></td><td><span className={`status-pill ${row.state === "firing" ? "danger" : "warning"}`}>{row.state}</span></td><td>{row.severity}</td><td>{row.scope ?? "—"}</td><td>{row.summary || "—"}</td><td>{time(row.active_at)}</td></tr>
   ))}</tbody></table></div>;
+}
+
+function ExperimentalHostPanel({ prediction }: { prediction: AnyRecord | null }) {
+  const status = prediction?.status ?? "unavailable";
+  const metrics = prediction?.metrics ?? {};
+  const statusClass = status === "scored" ? "warning" : status === "warming_up" ? "muted" : "danger";
+  const metricRows = [
+    ["CPU utilisation", "cpu_pct", "%"],
+    ["Memory utilisation", "memory_pct", "%"],
+    ["Disk I/O utilisation", "disk_io_util_pct", "%"],
+  ] as const;
+
+  return (
+    <section className="panel full-panel">
+      <PanelTitle
+        title="Experimental host failure scoring"
+        subtitle="Synthetic-trained model evaluated against live host telemetry"
+      />
+      <div className="notice warning">
+        <ShieldAlert size={16}/>
+        <div>
+          <b>EXPERIMENTAL · NOT PRODUCTION-QUALIFIED</b>
+          <span>
+            This model was trained on synthetic host-fault data. Its score is
+            observational only, is not production failure evidence, and does
+            not trigger alerts, policy changes, or remediation.
+          </span>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",margin:"14px 0"}}>
+        <span className={`status-pill ${statusClass}`}>{status.replace(/_/g, " ").toUpperCase()}</span>
+        {prediction?.model_version && <span style={{fontSize:10,color:"#8794a7"}}>Model {prediction.model_version}</span>}
+        {prediction?.buffered_samples != null && (
+          <span style={{fontSize:10,color:"#8794a7"}}>
+            {prediction.buffered_samples}/{prediction.required_history_minutes ?? 30} samples
+          </span>
+        )}
+      </div>
+      {prediction && status === "scored" ? (
+        <>
+          <div className="stat-grid">
+            <StatCard
+              icon={<Gauge/>}
+              label="EXPERIMENTAL SCORE"
+              value={`${(Number(prediction.probability) * 100).toFixed(1)}%`}
+              detail={`Threshold ${(Number(prediction.threshold) * 100).toFixed(1)}%`}
+              tone="amber"
+            />
+            <StatCard
+              icon={<Activity/>}
+              label="MODEL OUTPUT"
+              value={prediction.predicted_failure ? "Positive" : "Negative"}
+              detail={`${prediction.horizon_minutes ?? "—"} minute horizon`}
+              tone="blue"
+            />
+            <StatCard
+              icon={<ShieldCheck/>}
+              label="QUALITY GATES"
+              value={prediction.quality_gates_passed ? "Passed" : "Failed"}
+              detail="Synthetic test evaluation only"
+              tone={prediction.quality_gates_passed ? "green" : "amber"}
+            />
+          </div>
+          <div className="table-scroll">
+            <table>
+              <thead><tr><th>LIVE HOST METRIC</th><th>VALUE</th></tr></thead>
+              <tbody>
+                {metricRows.filter(([, key]) => metrics[key] != null).map(([label, key, unit]) => (
+                  <tr key={key}>
+                    <td>{label}</td>
+                    <td>{Number(metrics[key]).toFixed(1)}{unit}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="model-note">
+            <Clock3 size={15}/>
+            <span>Scored at {time(prediction.as_of)}. Data source: {prediction.data_source ?? "synthetic-trained model on live metrics"}.</span>
+          </div>
+          {prediction.quality_gates_passed !== true && (
+            <div className="notice warning" style={{marginTop:12}}>
+              <AlertTriangle size={15}/>
+              <div><b>Experimental quality gates did not pass</b><span>Do not interpret this score as a reliable failure estimate.</span></div>
+            </div>
+          )}
+        </>
+      ) : (
+        <EmptyState
+          icon={<Activity/>}
+          title={status === "warming_up" ? "Building host telemetry history" : "Experimental model unavailable"}
+          text={
+            prediction?.disclaimer
+            ?? "The isolated experimental model is not installed or the endpoint could not be reached."
+          }
+        />
+      )}
+    </section>
+  );
 }
 
 function LiveForecastPanel({ forecast }: { forecast: AnyRecord | null }) {
