@@ -75,11 +75,13 @@ def _capture_incident(
         actor = (event_data or {}).get("Actor", {})
         attributes = actor.get("Attributes", {})
         exit_code = state.get("ExitCode")
-        if exit_code is None:
+        if attributes.get("exitCode") is not None:
             try:
-                exit_code = int(attributes["exitCode"]) if attributes.get("exitCode") else None
+                event_exit_code = int(attributes["exitCode"])
+                if event_exit_code != 0 or exit_code in (None, 0):
+                    exit_code = event_exit_code
             except (TypeError, ValueError):
-                exit_code = None
+                pass
         oom_killed = bool(state.get("OOMKilled") or event == "oom")
         error = state.get("Error") or attributes.get("error") or ""
         if event in {"die", "oom"} and exit_code == 0 and not oom_killed and not error:
@@ -87,8 +89,12 @@ def _capture_incident(
 
         finished = state.get("FinishedAt")
         if not finished or finished.startswith("0001-"):
-            event_time = (event_data or {}).get("timeNano") or (event_data or {}).get("time")
-            finished = datetime.fromtimestamp(event_time / 1_000_000_000, UTC).isoformat() if event_time else datetime.now(UTC).isoformat()
+            event_payload = event_data or {}
+            if event_payload.get("timeNano"):
+                event_timestamp = float(event_payload["timeNano"]) / 1_000_000_000
+            else:
+                event_timestamp = float(event_payload["time"]) if event_payload.get("time") else None
+            finished = datetime.fromtimestamp(event_timestamp, UTC).isoformat() if event_timestamp else datetime.now(UTC).isoformat()
         started = state.get("StartedAt")
         runtime_seconds = None
         if started and finished and not started.startswith("0001-") and not finished.startswith("0001-"):
