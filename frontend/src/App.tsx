@@ -195,7 +195,7 @@ function App() {
   const primaryModel: AnyRecord | null = scopedModels?.host ?? data.model;
   const modelVersionLabel = modelCount
     ? Object.entries(scopedModels!).map(([scope, model]: [string, any]) => scope + ": " + (model.version ?? "missing")).join(" · ")
-    : data.model?.version ? "Version " + data.model.version : "No champion loaded";
+    : data.model?.version ? "Version " + data.model.version : "Model metadata unavailable";
   const sourceScopes: [string, AnyRecord][] = Object.entries(prometheus?.scopes ?? {});
   const sourceTargets = sourceScopes.flatMap(([, scope]) => Object.values(scope.services ?? {}) as AnyRecord[]);
   const configuredTargets = sourceTargets.length
@@ -281,7 +281,7 @@ function App() {
 
           {page === "Overview" && <>
             <section className="stat-grid">
-              <StatCard icon={<ShieldCheck/>} label="MODEL STATUS" value={isReady ? "Ready" : "Not ready"} detail={modelCount ? `Host ${hostModel ? "loaded" : "missing"} · Applications ${applicationModel ? "loaded" : "missing"}` : "Champion model unavailable"} tone={isReady ? "green" : "amber"} />
+              <StatCard icon={<ShieldCheck/>} label="MODEL STATUS" value={isReady ? "Ready" : "Monitoring"} detail={isReady ? "Qualified models loaded" : "Live telemetry and container operations active"} tone={isReady ? "green" : "blue"} />
               <StatCard icon={<Server/>} label="CONTAINERS" value={String(containerCount)} detail="Live cAdvisor resource inventory" tone="blue"/>
               <StatCard icon={<Bell/>} label="RECENT ALERTS" value={String(alertCount)} detail="Latest 50 records" tone={alertCount ? "amber" : "green"}/>
               <StatCard icon={<Zap/>} label="PROMETHEUS" value={sourceHealth} detail={sourceDetail} tone={sourceHealth === "Healthy" ? "green" : "amber"}/>
@@ -351,14 +351,14 @@ function App() {
               </div>
               <div className="panel model-panel">
                 <PanelTitle title="Model details" subtitle="Independent host and application model metadata"/>
-                <div className="model-version"><div className="model-icon"><Cpu size={20}/></div><div><b>{primaryModel?.model_type ?? (modelCount ? "Scoped prediction models" : "Model unavailable")}</b><span>{modelVersionLabel}</span></div><span className={isReady ? "status-pill success" : "status-pill warning"}>{isReady ? "READY" : "OFFLINE"}</span></div>
+                <div className="model-version"><div className="model-icon"><Cpu size={20}/></div><div><b>{primaryModel?.model_type ?? (modelCount ? "Scoped prediction models" : "Model unavailable")}</b><span>{modelVersionLabel}</span></div><span className={isReady ? "status-pill success" : "status-pill muted"}>{isReady ? "READY" : "MONITORING"}</span></div>
                 <Detail label="Host model" value={hostModel ? hostModel.version : "Not loaded"}/>
                 <Detail label="Application model" value={applicationModel ? applicationModel.version : "Not loaded"}/>
                 <Detail label="Decision threshold" value={primaryModel?.threshold !== undefined ? pretty(primaryModel.threshold) : "—"}/>
                 <Detail label="Required history" value={primaryModel?.required_history_minutes ? `${primaryModel.required_history_minutes} minutes` : "—"}/>
                 <Detail label="Feature count" value={primaryModel?.n_features ?? "—"}/>
                 <Detail label="Training data" value={primaryModel?.data_source ?? "—"}/>
-                <div className="model-note"><ShieldAlert size={15}/><span>{modelCount ? "Host and application models are isolated; both must pass production gates before readiness." : "No production-qualified champion is loaded. Live infrastructure monitoring remains active; predictions are unavailable."}</span></div>
+                <div className="model-note"><ShieldAlert size={15}/><span>{modelCount ? "Host and application models are isolated; both must pass production gates before readiness." : "Live infrastructure monitoring is active. Model-based predictions remain disabled until a qualified model is installed."}</span></div>
               </div>
             </section>
             <section className="content-grid lower-grid">
