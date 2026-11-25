@@ -26,6 +26,35 @@ services:
       - artifacts:/srv/artifacts
       - ./training-data:/srv/training-data:ro
     restart: "no"
+  # Build supervised datasets from real telemetry and confirmed incident annotations.
+  build-training-data:
+    profiles: [ "training" ]
+    build: { context: ., dockerfile: docker/Dockerfile, target: trainer }
+    image: predictiveops-trainer:local
+    environment: *app-env
+    entrypoint: [ "python", "scripts/build_training_data.py" ]
+    command: [ "--scope", "host" ]
+    volumes:
+      - artifacts:/srv/artifacts
+      - ./training-data:/srv/training-data
+    restart: "no"
+
+  # Isolated synthetic model for the explicitly labelled dashboard demonstration.
+  demo-model:
+    profiles: [ "demo" ]
+    build: { context: ., dockerfile: docker/Dockerfile, target: trainer }
+    image: predictiveops-trainer:local
+    environment: *app-env
+    command:
+      - sh
+      - -c
+      - >-
+        python scripts/generate_data.py --days 14 --series 4 --seed 42 --out /tmp/synthetic.csv.gz &&
+        python scripts/train.py --data /tmp/synthetic.csv.gz --scope combined
+        --model-root /srv/artifacts/models --no-mlflow --promote
+    volumes: [ "artifacts:/srv/artifacts" ]
+    restart: "no"
+
   api:
     build: { context: ., dockerfile: docker/Dockerfile, target: runtime }
     image: predictiveops-runtime:local
