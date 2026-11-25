@@ -142,9 +142,10 @@ live remediation until its target allowlist and action path have been reviewed.
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /health`, `GET /ready` | Liveness and readiness; production requires both qualified scope models |
+| `GET /health`, `GET /ready` | Liveness and readiness; requires host model and application model only when application targets are configured |
 | `GET /v1/model` | Model metadata; production returns separate host and application models |
 | `GET /v1/sources` | Prometheus source and per-scope poller status |
+| `GET /v1/experimental/host/prediction` | Read-only experimental model scored against live host telemetry; synthetic-trained and not production-qualified |
 | `GET /v1/series[/{id}]` | Buffered time series and latest prediction state |
 | `GET /v1/alerts`, `GET /v1/audit`, `GET /v1/policy` | Alert history, audit log and policy state |
 | `GET /metrics` | PredictiveOps Prometheus instrumentation |
@@ -155,6 +156,34 @@ The production API polls host metrics and configured application targets indepen
 needs at least the model's required contiguous one-minute history before the first prediction.
 Missing exporters, missing metrics, stale samples and unqualified models are reported as source or
 readiness failures; they are never converted into a healthy zero-valued prediction.
+
+### Experimental live host prediction (synthetic-trained)
+
+For a live demonstration without claiming production-grade training data, build an isolated host model
+from host-only synthetic fault scenarios and score it against the real host telemetry collected by the
+Prometheus poller. This model is stored under `artifacts/models/experimental-host`; it is never placed
+in the production host/application champion directories and it never drives alerts or remediation.
+
+On the server, from the repository root:
+
+```bash
+docker compose build trainer api frontend
+docker compose run --rm --no-deps trainer python scripts/train_experimental_host.py
+docker compose up -d --no-deps api frontend
+```
+
+The trainer uses host resource signals (CPU, memory and disk I/O) to define its synthetic labels, trains
+a host-scope HGB model, evaluates it on a chronological held-out test segment, and promotes only within
+the isolated experimental model directory when the configured gates pass. The dashboard's **Live host
+failure-risk inference** panel then scores the current real Prometheus host series and shows its recent
+probability trend. The first score requires 30 contiguous one-minute samples; the poller backfills its
+configured lookback window when available.
+
+**Interpretation:** this is a cross-domain experiment (synthetic training, real live inputs), not a
+validated production failure forecast. Its probabilities and threshold are not evidence of real-world
+calibration. The endpoint is read-only and does not update production readiness, policy, alerts or
+remediation. Production qualification still requires representative labelled real-world host failures
+and independent validation.
 
 ## Alert policy and safe remediation
 
