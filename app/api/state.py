@@ -49,6 +49,7 @@ class ApiState:
     settings: Settings
     predictor: Predictor | None
     demo_predictor: Predictor | None = None
+    experimental_host_predictor: Predictor | None = None
     scope_predictors: dict[str, Predictor] = field(default_factory=dict)
     registry: CollectorRegistry = field(default_factory=CollectorRegistry)
     buffers: dict[str, SeriesBuffer] = field(default_factory=dict)
@@ -81,6 +82,10 @@ class ApiState:
     def set_demo_predictor(self, predictor: Predictor | None) -> None:
         # Demonstration-only model. Never register it as a production scope model.
         self.demo_predictor = predictor
+
+    def set_experimental_host_predictor(self, predictor: Predictor | None) -> None:
+        # Synthetic-trained cross-domain scorer; excluded from production prediction scopes.
+        self.experimental_host_predictor = predictor
 
     def set_scope_predictors(self, predictors: dict[str, Predictor]) -> None:
         self.scope_predictors = dict(predictors)
