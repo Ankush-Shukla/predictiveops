@@ -252,10 +252,14 @@ def _run_stress(path: Path, run_id: str, max_users: int, duration: int):
                            (len(workers), json.dumps([w.id for w in workers]), run_id))
             deadline = time.monotonic() + 2.0
             while time.monotonic() < deadline:
-                worker.reload()
-                if worker.status != "running":
-                    failure = f"Virtual user {index} exited ({worker.status})"
-                    status = "capacity_reached"
+                for active_index, active in enumerate(workers, start=1):
+                    active.reload()
+                    if active.status != "running":
+                        failure = f"Virtual user {active_index} exited ({active.status})"
+                        status = "capacity_reached"
+                        _capture_incident(path, active.id, "stress_failure")
+                        break
+                if failure:
                     break
                 time.sleep(.2)
             if failure:
