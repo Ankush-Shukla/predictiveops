@@ -119,8 +119,8 @@ curl -i "http://$TAILSCALE_IP:8000/ready"
 ```
 
 Prometheus scrapes at 15-second intervals; the prediction pipeline samples one-minute
-windows. The host and application models remain separate. Both must pass production
-eligibility checks before readiness becomes healthy. The first prediction for a new series
+windows. The host and application models remain separate. The host model must pass production eligibility;
+an application model is additionally required when application targets are configured. The first prediction for a new series
 requires the model's full contiguous feature history.
 
 | URL | Purpose |
@@ -269,8 +269,8 @@ application instrumentation still require an end-to-end run on the target server
 ## Known limitations and release blockers
 
 - Real, reviewed, labelled host and application datasets have not yet been supplied. Production
-  readiness deliberately remains HTTP 503 until both models are trained from non-synthetic data
-  and pass their evaluation gates.
+  readiness deliberately remains HTTP 503 until the host model and every configured application model are trained
+  from non-synthetic data and pass their evaluation gates.
 - Each application must expose the documented request counter and latency histogram, and its
   container must carry the `predictiveops.service` label. Uninstrumented applications are not
   eligible for application-level inference.
