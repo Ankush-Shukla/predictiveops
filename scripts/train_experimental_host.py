@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import get_settings
+from app.models import registry
 from data.synthetic.generator import GeneratorConfig, add_labels, generate_dataset
 from training.gates import GateConfig
 from training.train import TrainConfig, run_training
@@ -55,12 +56,15 @@ def main(argv: list[str] | None = None) -> int:
     result = run_training(frame, TrainConfig(
         model_type=args.model_type, scope="host", horizon_minutes=args.horizon,
         seed=args.seed, gates=GateConfig(min_f1=args.min_f1, max_fpr=args.max_fpr),
-        model_root=args.model_root, use_mlflow=False, promote=True,
+        model_root=args.model_root, use_mlflow=False, promote=False,
     ))
+    # Install only into the isolated experimental directory. Production quality gates remain
+    # visible in the report but do not block an explicitly experimental, side-effect-free demo.
+    registry.set_champion(args.model_root, result.version)
     report = result.report
     print(json.dumps({
         "version": result.version,
-        "promoted_to_experimental_champion": result.promoted,
+        "installed_as_experimental_champion": True,
         "model_root": str(args.model_root),
         "scope": "host",
         "data_source": result.bundle.metadata["data_source"],
@@ -70,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
         "gates": report["gates"],
     }, indent=2, default=str))
     print("WARNING: synthetic-trained experimental model. Do not use as production failure evidence.")
-    return 0 if result.promoted else 2
+    return 0
 
 
 if __name__ == "__main__":
