@@ -170,7 +170,7 @@ def managed_containers():
 def container_action(container_id: str, action: str):
     if action not in {"restart", "stop", "kill"}:
         raise HTTPException(status_code=400, detail="Action must be restart, stop, or kill")
-    client, container = _find_container(container_id)
+    _, container = _find_container(container_id)
     service = container.labels.get("com.docker.compose.service")
     if service == "api":
         raise HTTPException(status_code=409, detail="The API container cannot control itself")
