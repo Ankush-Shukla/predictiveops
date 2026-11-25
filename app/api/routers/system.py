@@ -41,10 +41,7 @@ def _model_payload(p: Predictor) -> dict:
 def ready(state: ApiState = Depends(get_state)):
     """Readiness requires every configured production prediction scope to be qualified."""
     if state.settings.env == "production":
-        required_scopes = ["host"]
-        if state.settings.prometheus_application_service_list:
-            required_scopes.append("application")
-        for scope in required_scopes:
+        for scope in ("host", "application"):
             predictor = state.scope_predictors.get(scope)
             reason = production_model_block_reason(state, predictor, expected_scope=scope)
             if reason is not None:
@@ -54,7 +51,7 @@ def ready(state: ApiState = Depends(get_state)):
                     "data_source": predictor.bundle.metadata.get("data_source") if predictor else None,
                 })
         return {"status": "ready", "models": {
-            scope: state.scope_predictors[scope].version for scope in required_scopes
+            scope: state.scope_predictors[scope].version for scope in ("host", "application")
         }}
     reason = production_model_block_reason(state)
     if reason is not None:
