@@ -45,7 +45,8 @@ def test_refuses_to_write_without_enough_incidents(tmp_path):
         cpu_pct REAL, memory_pct REAL, disk_io_util_pct REAL, network_rx_mbps REAL, network_tx_mbps REAL,
         request_rate_rps REAL, latency_p95_ms REAL, error_rate REAL, ingestion_source TEXT)""")
     db.execute("INSERT INTO telemetry_samples VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", _row("h", 0))
-    db.commit(); db.close()
+    db.commit()
+    db.close()
     out = tmp_path / "host.csv.gz"
     with pytest.raises(SystemExit):
         btd.main(["--scope", "host", "--db", str(path), "--out", str(out)])

@@ -141,8 +141,9 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
         app.include_router(predict.development_router)
         app.include_router(canary.router)
 
-    # Simulation is isolated from production inference and always labelled synthetic.
-    app.include_router(simulate.router)
+    # Synthetic simulation is a development/demo surface, never a production API.
+    if settings.env != "production":
+        app.include_router(simulate.router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", include_in_schema=False)

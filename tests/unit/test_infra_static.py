@@ -83,7 +83,8 @@ def test_prometheus_scrapes_host_and_discovered_application_targets():
     assert env["PREDICTIVEOPS_PROMETHEUS_APPLICATION_SERVICES"].endswith(":-}")
     assert "api:8000" in jobs["predictiveops-api"]["static_configs"][0]["targets"]
     assert jobs["node-exporter"]["static_configs"][0]["targets"] == ["${TAILSCALE_IP}:9100"]
-    assert "./prometheus/prometheus.server.yml:/etc/prometheus/prometheus.yml:ro" in SVC["prometheus"]["volumes"]
+    prometheus_volume = "./prometheus/prometheus.server.yml:/etc/prometheus/prometheus.yml:ro"
+    assert prometheus_volume in SVC["prometheus"]["volumes"]
     assert "--config.expand-env" not in SVC["prometheus"]["command"]
     assert SVC["node-exporter"]["network_mode"] == "host"
     assert "--path.procfs=/host/proc" in SVC["node-exporter"]["command"]

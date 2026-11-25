@@ -3,7 +3,7 @@
 
 import argparse
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 DB_DEFAULT = "/srv/artifacts/predictiveops.sqlite"
@@ -38,7 +38,7 @@ def timestamp(value):
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         raise ValueError("Timestamp must include a timezone, e.g. +00:00")
-    return parsed.astimezone(timezone.utc).isoformat()
+    return parsed.astimezone(UTC).isoformat()
 
 
 def add(args):
@@ -61,7 +61,7 @@ def add(args):
             args.category,
             args.evidence,
             args.source,
-            datetime.now(timezone.utc).isoformat(),
+            datetime.now(UTC).isoformat(),
         ))
 
     print("Confirmed incident recorded.")
