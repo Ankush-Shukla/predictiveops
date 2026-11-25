@@ -137,6 +137,9 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
             for poller in pollers:
                 poller.start()
         operations.cleanup_orphaned_stress_containers()
+        operations.recover_interrupted_stress_runs(
+            settings.sqlite_path.with_name("operations.sqlite3"), app.state.api.store
+        )
         operations.start_event_watcher(settings.sqlite_path.with_name('operations.sqlite3'))
         yield
         operations.stop_event_watcher(settings.sqlite_path.with_name('operations.sqlite3'))
