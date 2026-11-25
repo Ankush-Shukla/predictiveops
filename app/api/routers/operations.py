@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import threading
 import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-import sqlite3
 
 import docker
 from docker.errors import APIError, DockerException, NotFound
@@ -108,7 +108,10 @@ def start_event_watcher(path: Path) -> None:
         while not stop.is_set():
             try:
                 client = _client()
-                for event in client.events(decode=True, filters={"type": "container", "event": ["die", "oom"]}):
+                events = client.events(
+                    decode=True, filters={"type": "container", "event": ["die", "oom"]}
+                )
+                for event in events:
                     if stop.is_set():
                         break
                     actor = event.get("Actor", {}).get("ID")
@@ -181,7 +184,10 @@ def container_action(container_id: str, action: str):
             container.stop(timeout=5)
         else:
             container.kill()
-        log.info("container action", extra={"container": container.name, "service": service, "action": action})
+        log.info(
+            "container action",
+            extra={"container": container.name, "service": service, "action": action},
+        )
         return {"success": True, "container": container.name, "action": action}
     except (DockerException, APIError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
