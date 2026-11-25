@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, Bell, CheckCircle2,
   ChevronRight, CircleHelp, Clock3, Cpu, ExternalLink, Gauge, LayoutDashboard,
-  RefreshCw, Server, ShieldCheck, ShieldAlert, Zap,
+  RefreshCw, Server, ShieldCheck, ShieldAlert, Zap, FileText, ScrollText, Terminal, Play, RotateCcw, Square, Skull,
 } from "lucide-react";
 import {
   Area, AreaChart, Bar, CartesianGrid, ComposedChart, Legend, Line,
@@ -59,6 +59,13 @@ function App() {
   const [history, setHistory] = useState<AnyRecord | null>(null);
   const [infraAlerts, setInfraAlerts] = useState<AnyRecord | null>(null);
   const [coverage, setCoverage] = useState<AnyRecord | null>(null);
+  const [managedContainers, setManagedContainers] = useState<AnyRecord[]>([]);
+  const [incidents, setIncidents] = useState<AnyRecord[]>([]);
+  const [selectedLogContainer, setSelectedLogContainer] = useState("");
+  const [liveLogs, setLiveLogs] = useState("");
+  const [opsError, setOpsError] = useState<string | null>(null);
+  const [stressRun, setStressRun] = useState<AnyRecord | null>(null);
+  const [stressBusy, setStressBusy] = useState(false);
 
   const refreshLive = useCallback(async () => {
     const [nextHistory, nextAlerts, nextCoverage] = await Promise.all([
@@ -76,6 +83,78 @@ function App() {
     const timer = window.setInterval(() => void refreshLive(), 10000);
     return () => window.clearInterval(timer);
   }, [refreshLive]);
+
+  const refreshOperations = useCallback(async () => {
+    try {
+      const [containerResult, incidentResult] = await Promise.all([
+        get("/v1/ops/containers"), get("/v1/ops/incidents?limit=100")
+      ]);
+      setManagedContainers(containerResult.containers ?? []);
+      setIncidents(incidentResult.incidents ?? []);
+      setOpsError(containerResult.error ?? null);
+      const selected = selectedLogContainer || containerResult.containers?.[0]?.id || "";
+      if (selected && selected !== selectedLogContainer) setSelectedLogContainer(selected);
+      if (selected) {
+        const logResult = await get(`/v1/ops/containers/${selected}/logs?tail=300`);
+        setLiveLogs(logResult.logs ?? "");
+      }
+    } catch (error) {
+      setOpsError(error instanceof Error ? error.message : String(error));
+    }
+  }, [selectedLogContainer]);
+
+  useEffect(() => {
+    void refreshOperations();
+    const timer = window.setInterval(() => void refreshOperations(), 5000);
+    return () => window.clearInterval(timer);
+  }, [refreshOperations]);
+
+  useEffect(() => {
+    if (!stressRun?.run_id || stressRun.status !== "running") return;
+    const timer = window.setInterval(async () => {
+      try { setStressRun(await get(`/v1/ops/stress/${stressRun.run_id}`)); }
+      catch { /* keep the last visible run state */ }
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [stressRun?.run_id, stressRun?.status]);
+
+  const loadContainerLogs = useCallback(async (id: string) => {
+    setSelectedLogContainer(id);
+    setPage("Live logs");
+    try {
+      const result = await get(`/v1/ops/containers/${id}/logs?tail=500`);
+      setLiveLogs(result.logs ?? "");
+    } catch (error) {
+      setLiveLogs(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
+
+  const runContainerAction = useCallback(async (id: string, action: string) => {
+    if (!window.confirm(`Are you sure you want to ${action} this container?`)) return;
+    try {
+      const response = await fetch(`/v1/ops/containers/${id}/${action}`, { method: "POST" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.detail ?? `Action failed: HTTP ${response.status}`);
+      await refreshOperations();
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    }
+  }, [refreshOperations]);
+
+  const startStressTest = useCallback(async () => {
+    setStressBusy(true);
+    try {
+      const response = await fetch("/v1/ops/stress", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ max_users: 10, duration_seconds: 30 })
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body?.detail ?? "Could not start stress test");
+      setStressRun(body);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    } finally { setStressBusy(false); }
+  }, []);
 
   const historyData = useMemo(
     () => (history?.points ?? []).map((point: AnyRecord) => ({ ...point, time: point.t * 1000 })),
@@ -210,6 +289,8 @@ function App() {
           <button className={page === "Overview" ? "nav-item active" : "nav-item"} onClick={() => activePage("Overview")}><LayoutDashboard size={17}/>Overview</button>
           <button className={page === "Predictions" ? "nav-item active" : "nav-item"} onClick={() => activePage("Predictions")}><Gauge size={17}/>Predictions<span className="nav-count">{serviceCount}</span></button>
           <button className={page === "Containers" ? "nav-item active" : "nav-item"} onClick={() => activePage("Containers")}><Server size={17}/>Containers<span className="nav-count">{containerCount}</span></button>
+          <button className={page === "Crash reports" ? "nav-item active" : "nav-item"} onClick={() => activePage("Crash reports")}><FileText size={17}/>Crash reports<span className="nav-count">{incidents.length}</span></button>
+          <button className={page === "Live logs" ? "nav-item active" : "nav-item"} onClick={() => activePage("Live logs")}><ScrollText size={17}/>Live logs</button>
           <button className={page === "Alerts & audit" ? "nav-item active" : "nav-item"} onClick={() => activePage("Alerts & audit")}><Bell size={17}/>Alerts & audit<span className="nav-count">{alertCount}</span></button>
         </nav>
         <div className="nav-label monitoring-label">MONITORING</div>
@@ -230,7 +311,7 @@ function App() {
 
         <div className="page-content">
           <div className="page-heading">
-            <div><div className="eyebrow">SYSTEM OVERVIEW <span className="eyebrow-line"/></div><h1>{page}</h1><p>{page === "Overview" ? "Predictive service health, model readiness and operational signals." : page === "Predictions" ? "Current model assessments for monitored service series." : page === "Alerts & audit" ? "Alert history and gated remediation decisions." : page === "Containers" ? "Live CPU, memory and network usage by Docker container." : "Operational monitoring."}</p></div>
+            <div><div className="eyebrow">SYSTEM OVERVIEW <span className="eyebrow-line"/></div><h1>{page}</h1><p>{page === "Overview" ? "Predictive service health, model readiness and operational signals." : page === "Predictions" ? "Current model assessments for monitored service series." : page === "Alerts & audit" ? "Alert history and gated remediation decisions." : page === "Containers" ? "Live resources, container controls and bounded stress testing." : page === "Crash reports" ? "Historical container failure incidents with exit details and captured logs." : page === "Live logs" ? "Live output from a selected container." : "Operational monitoring."}</p></div>
             <div className="updated"><Clock3 size={14}/><span>{lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString()}` : "Waiting for data"}</span></div>
           </div>
 
@@ -470,8 +551,35 @@ function App() {
               {data.containerStatus?.error && <div className="notice warning"><AlertTriangle size={16}/><div><b>Container telemetry unavailable</b><span>{data.containerStatus.error}</span></div></div>}
               <ContainerTable rows={containerRows}/>
             </section>
+            <section className="panel full-panel">
+              <PanelTitle title="Container controls" subtitle="Restart, stop, kill and inspect logs for this PredictiveOps stack"/>
+              {opsError && <div className="notice warning"><AlertTriangle size={15}/><div><b>Docker control unavailable</b><span>{opsError}</span></div></div>}
+              <ManagedContainerTable rows={managedContainers} onAction={runContainerAction} onLogs={loadContainerLogs}/>
+            </section>
+            <section className="panel full-panel stress-panel">
+              <PanelTitle title="Stress test · virtual users" subtitle="Starts isolated, memory-capped worker containers and stops adding users when the first worker exits"/>
+              <div className="stress-actions">
+                <div><b>Maximum: 10 concurrent workers</b><span>32 MB memory and 0.1 CPU per worker · 30-second cap · no network access</span></div>
+                <button className="primary-action" onClick={() => void startStressTest()} disabled={stressBusy || stressRun?.status === "running"}><Play size={14}/>{stressBusy ? "Starting…" : stressRun?.status === "running" ? "Test running…" : "Start stress test"}</button>
+              </div>
+              {stressRun && <div className="stress-result"><span className={stressRun.status === "running" ? "status-pill warning" : "status-pill success"}>{String(stressRun.status).replace(/_/g," ")}</span><b>{stressRun.users_started ?? 0} virtual users started</b><span>{stressRun.failure ?? (stressRun.status === "running" ? "Measuring capacity…" : "Run completed")}</span></div>}
+            </section>
             <section className="container-grafana-link"><span>Historical container trends, filesystem I/O and network charts</span><a href={"http://" + window.location.hostname + ":3000/d/predictiveops/predictiveops"} target="_blank" rel="noreferrer">Open infrastructure dashboard <ExternalLink size={13}/></a></section>
           </>}
+          {page === "Crash reports" && <section className="panel full-panel">
+            <PanelTitle title="Historical crash reports" subtitle="Captured from Docker die and OOM events · newest first"/>
+            <IncidentTable rows={incidents}/>
+          </section>}
+          {page === "Live logs" && <section className="panel full-panel">
+            <PanelTitle title="Live container logs" subtitle="Refreshes automatically every five seconds"/>
+            <div className="log-toolbar">
+              <select value={selectedLogContainer} onChange={event => void loadContainerLogs(event.target.value)}>
+                {managedContainers.map(container => <option key={container.id} value={container.id}>{container.name} · {container.status}</option>)}
+              </select>
+              <button className="secondary-action" onClick={() => selectedLogContainer && void loadContainerLogs(selectedLogContainer)}><RefreshCw size={13}/>Refresh logs</button>
+            </div>
+            <pre className="live-log-output">{liveLogs || "No log output available for this container."}</pre>
+          </section>}
           {page === "Alerts & audit" && <section className="content-grid stacked-panels"><div className="panel"><PanelTitle title="Infrastructure alerts" subtitle="Pending and firing Prometheus alerts"/><InfraAlerts data={infraAlerts}/></div><div className="panel"><PanelTitle title="Recent alerts" subtitle="Policy-generated service alerts"/><RecordTable rows={data.alerts} empty="No alert records returned."/></div><div className="panel"><PanelTitle title="Remediation audit" subtitle="Executed, dry-run, blocked and skipped decisions"/><RecordTable rows={data.audit} empty="No remediation decisions recorded."/></div></section>}
 
           <footer className="footer"><span>PredictiveOps <b>·</b> Reliability intelligence</span><span>Refresh interval 10s <b>·</b> {loading ? "Connecting…" : "API snapshot loaded"}</span></footer>
@@ -713,6 +821,30 @@ function formatRate(value: number | null | undefined) { return value === null ||
 function ContainerTable({rows}:{rows:AnyRecord[]}) {
   if (!rows.length) return <EmptyState icon={<Server/>} title="No container metrics yet" text="Check cAdvisor health and its Prometheus scrape target. Containers appear when cAdvisor exports resource metrics."/>;
   return <div className="table-scroll"><table><thead><tr><th>CONTAINER</th><th>COMPOSE SERVICE</th><th>CPU CORES</th><th>MEMORY WORKING SET</th><th>NETWORK RX</th><th>NETWORK TX</th></tr></thead><tbody>{rows.map(row=><tr key={row.name}><td><span className="service-name"><span className="service-dot"/>{row.name}</span></td><td>{row.service ?? "—"}</td><td>{row.cpu_cores === null ? "—" : Number(row.cpu_cores).toFixed(3)}</td><td>{formatBytes(row.memory_bytes)}</td><td>{formatRate(row.network_rx_bytes_s)}</td><td>{formatRate(row.network_tx_bytes_s)}</td></tr>)}</tbody></table></div>;
+}
+function ManagedContainerTable({rows,onAction,onLogs}:{rows:AnyRecord[];onAction:(id:string,action:string)=>void;onLogs:(id:string)=>void}) {
+  if (!rows.length) return <EmptyState icon={<Server/>} title="No managed containers found" text="The API needs access to the Docker socket and the PredictiveOps Compose project." />;
+  return <div className="table-scroll"><table><thead><tr><th>CONTAINER</th><th>SERVICE</th><th>STATUS</th><th>LAST EXIT</th><th>CONTROLS</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}>
+    <td><span className="service-name">{row.name}</span><small className="container-id">{row.short_id}</small></td><td>{row.service}</td>
+    <td><span className={`status-pill ${row.status === "running" ? "success" : "danger"}`}>{row.status}</span></td>
+    <td>{row.exit_code ?? "—"}{row.oom_killed ? " · OOM" : ""}</td>
+    <td className="container-actions"><button onClick={()=>onLogs(row.id)} title="View logs"><Terminal size={13}/>Logs</button>
+      {row.can_control && <><button onClick={()=>onAction(row.id,"restart")} title="Restart"><RotateCcw size={13}/>Restart</button><button onClick={()=>onAction(row.id,"stop")} title="Stop"><Square size={12}/>Stop</button><button className="danger-action" onClick={()=>onAction(row.id,"kill")} title="Kill"><Skull size={13}/>Kill</button></>}
+      {!row.can_control && <span className="container-id">API protected</span>}
+    </td></tr>)}</tbody></table></div>;
+}
+function IncidentTable({rows}:{rows:AnyRecord[]}) {
+  const [selected,setSelected] = useState<AnyRecord|null>(null);
+  if (!rows.length) return <EmptyState icon={<CheckCircle2/>} title="No container crashes recorded" text="Docker die and OOM events will appear here automatically." />;
+  return <div className="incident-list">{rows.map(row=><button className={selected?.incident_id===row.incident_id?"incident-row selected":"incident-row"} key={row.incident_id} onClick={()=>setSelected(row)}>
+    <span><b>{row.container_name}</b><small>{row.compose_service ?? "container"} · {time(row.finished_at)}</small></span>
+    <span className="incident-meta"><i className={row.oom_killed?"incident-oom":"incident-exit"}/>{row.oom_killed?"OOM killed":`Exit ${row.exit_code ?? "—"}`}</span>
+  </button>)}
+  {selected && <div className="incident-detail"><div className="incident-detail-head"><b>Incident report · {selected.incident_id}</b><span>{selected.event}</span></div>
+    <div className="incident-facts"><span>Container <b>{selected.container_name}</b></span><span>Exit code <b>{selected.exit_code ?? "—"}</b></span><span>OOM killed <b>{selected.oom_killed?"Yes":"No"}</b></span><span>Error <b>{selected.error || "None reported"}</b></span><span>Started <b>{time(selected.started_at)}</b></span><span>Finished <b>{time(selected.finished_at)}</b></span></div>
+    <pre className="live-log-output">{selected.logs_tail || "No logs captured."}</pre>
+  </div>}
+  </div>;
 }
 function RecordTable({rows,empty:emptyText}:{rows:AnyRecord[];empty:string}) {
   if (!rows.length) return <EmptyState icon={<CheckCircle2/>} title="Nothing to show" text={emptyText}/>;
