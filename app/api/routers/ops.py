@@ -111,7 +111,7 @@ def _container_payload(container) -> dict:
     if is_stress:
         try:
             log_text = container.logs(stdout=True, stderr=True, tail=100).decode("utf-8", "replace")
-            counts = re.findall(r"SIMULATED_USERS_STARTED=(\\d+)", log_text)
+            counts = re.findall(r"SIMULATED_USERS_STARTED=(\d+)", log_text)
             payload["simulated_users_started"] = int(counts[-1]) if counts else 0
             payload["stress_result"] = (
                 "running" if container.status == "running"
