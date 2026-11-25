@@ -61,6 +61,7 @@ function App() {
   const [coverage, setCoverage] = useState<AnyRecord | null>(null);
   const [managedContainers, setManagedContainers] = useState<AnyRecord[]>([]);
   const [incidents, setIncidents] = useState<AnyRecord[]>([]);
+  const [incidentContainer, setIncidentContainer] = useState("");
   const [selectedLogContainer, setSelectedLogContainer] = useState("");
   const [liveLogs, setLiveLogs] = useState("");
   const [opsError, setOpsError] = useState<string | null>(null);
@@ -554,7 +555,7 @@ function App() {
             <section className="panel full-panel">
               <PanelTitle title="Container controls" subtitle="Restart, stop, kill and inspect logs for this PredictiveOps stack"/>
               {opsError && <div className="notice warning"><AlertTriangle size={15}/><div><b>Docker control unavailable</b><span>{opsError}</span></div></div>}
-              <ManagedContainerTable rows={managedContainers} onAction={runContainerAction} onLogs={loadContainerLogs}/>
+              <ManagedContainerTable rows={managedContainers} onAction={runContainerAction} onLogs={loadContainerLogs} onIncidents={(id) => { setIncidentContainer(id); setPage("Crash reports"); }}/>
             </section>
             <section className="panel full-panel stress-panel">
               <PanelTitle title="Stress test · virtual users" subtitle="Starts isolated, memory-capped worker containers and stops adding users when the first worker exits"/>
@@ -567,8 +568,9 @@ function App() {
             <section className="container-grafana-link"><span>Historical container trends, filesystem I/O and network charts</span><a href={"http://" + window.location.hostname + ":3000/d/predictiveops/predictiveops"} target="_blank" rel="noreferrer">Open infrastructure dashboard <ExternalLink size={13}/></a></section>
           </>}
           {page === "Crash reports" && <section className="panel full-panel">
-            <PanelTitle title="Historical crash reports" subtitle="Captured from Docker die and OOM events · newest first"/>
-            <IncidentTable rows={incidents}/>
+            <PanelTitle title="Historical crash reports" subtitle={incidentContainer ? "Filtered to the selected container" : "Captured from Docker die and OOM events · newest first"}/>
+            {incidentContainer && <button className="secondary-action" onClick={() => setIncidentContainer("")}>Show all containers</button>}
+            <IncidentTable rows={incidents.filter(row => !incidentContainer || row.container_id === incidentContainer)}/>
           </section>}
           {page === "Live logs" && <section className="panel full-panel">
             <PanelTitle title="Live container logs" subtitle="Refreshes automatically every five seconds"/>
@@ -822,13 +824,13 @@ function ContainerTable({rows}:{rows:AnyRecord[]}) {
   if (!rows.length) return <EmptyState icon={<Server/>} title="No container metrics yet" text="Check cAdvisor health and its Prometheus scrape target. Containers appear when cAdvisor exports resource metrics."/>;
   return <div className="table-scroll"><table><thead><tr><th>CONTAINER</th><th>COMPOSE SERVICE</th><th>CPU CORES</th><th>MEMORY WORKING SET</th><th>NETWORK RX</th><th>NETWORK TX</th></tr></thead><tbody>{rows.map(row=><tr key={row.name}><td><span className="service-name"><span className="service-dot"/>{row.name}</span></td><td>{row.service ?? "—"}</td><td>{row.cpu_cores === null ? "—" : Number(row.cpu_cores).toFixed(3)}</td><td>{formatBytes(row.memory_bytes)}</td><td>{formatRate(row.network_rx_bytes_s)}</td><td>{formatRate(row.network_tx_bytes_s)}</td></tr>)}</tbody></table></div>;
 }
-function ManagedContainerTable({rows,onAction,onLogs}:{rows:AnyRecord[];onAction:(id:string,action:string)=>void;onLogs:(id:string)=>void}) {
+function ManagedContainerTable({rows,onAction,onLogs,onIncidents}:{rows:AnyRecord[];onAction:(id:string,action:string)=>void;onLogs:(id:string)=>void;onIncidents:(id:string)=>void}) {
   if (!rows.length) return <EmptyState icon={<Server/>} title="No managed containers found" text="The API needs access to the Docker socket and the PredictiveOps Compose project." />;
   return <div className="table-scroll"><table><thead><tr><th>CONTAINER</th><th>SERVICE</th><th>STATUS</th><th>LAST EXIT</th><th>CONTROLS</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}>
     <td><span className="service-name">{row.name}</span><small className="container-id">{row.short_id}</small></td><td>{row.service}</td>
     <td><span className={`status-pill ${row.status === "running" ? "success" : "danger"}`}>{row.status}</span></td>
     <td>{row.exit_code ?? "—"}{row.oom_killed ? " · OOM" : ""}</td>
-    <td className="container-actions"><button onClick={()=>onLogs(row.id)} title="View logs"><Terminal size={13}/>Logs</button>
+    <td className="container-actions"><button onClick={()=>onLogs(row.id)} title="View logs"><Terminal size={13}/>Logs</button><button onClick={()=>onIncidents(row.id)} title="View crash reports"><FileText size={13}/>Crashes</button>
       {row.can_control && <>{row.status !== "running" && <button onClick={()=>onAction(row.id,"start")} title="Start"><Play size={13}/>Start</button>}{row.status === "running" && <><button onClick={()=>onAction(row.id,"restart")} title="Restart"><RotateCcw size={13}/>Restart</button><button onClick={()=>onAction(row.id,"stop")} title="Stop"><Square size={12}/>Stop</button><button className="danger-action" onClick={()=>onAction(row.id,"kill")} title="Kill"><Skull size={13}/>Kill</button></>}</>}
       {!row.can_control && <span className="container-id">API protected</span>}
     </td></tr>)}</tbody></table></div>;
