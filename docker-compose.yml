@@ -71,6 +71,7 @@ services:
       PREDICTIVEOPS_REMEDIATION_ENABLED: ${PREDICTIVEOPS_REMEDIATION_ENABLED:-false}
       PREDICTIVEOPS_DRY_RUN: ${PREDICTIVEOPS_DRY_RUN:-true}
       PREDICTIVEOPS_REMEDIATION_TARGETS: '{}'
+      PREDICTIVEOPS_LOAD_GENERATOR_TOKEN: ${PREDICTIVEOPS_LOAD_GENERATOR_TOKEN:?set PREDICTIVEOPS_LOAD_GENERATOR_TOKEN in .env}
     volumes:
       - artifacts:/srv/artifacts
       - /var/run/docker.sock:/var/run/docker.sock
@@ -82,6 +83,8 @@ services:
     build: { context: ., dockerfile: docker/Dockerfile, target: runtime }
     image: predictiveops-runtime:local
     command: ["uvicorn", "app.services.load_generator:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      PREDICTIVEOPS_LOAD_GENERATOR_TOKEN: ${PREDICTIVEOPS_LOAD_GENERATOR_TOKEN:?set PREDICTIVEOPS_LOAD_GENERATOR_TOKEN in .env}
     expose: ["8001"]
     read_only: true
     tmpfs: ["/tmp:size=16m,noexec,nosuid"]

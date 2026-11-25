@@ -1,6 +1,6 @@
 # Application HTTP load testing
 
-The dedicated `load-generator` container runs bounded HTTP tests. The API discovers target containers from Docker inventory and resolves a private IPv4 address on a network shared with the generator. Arbitrary URLs and hostnames are not accepted.
+The dedicated `load-generator` container runs bounded HTTP tests. API-to-generator requests require a shared secret that is not exposed on a published port. Set `PREDICTIVEOPS_LOAD_GENERATOR_TOKEN` in `.env` (generate one with `openssl rand -hex 32`) before starting the stack. The API discovers target containers from Docker inventory and resolves a private IPv4 address on a network shared with the generator. Arbitrary URLs and hostnames are not accepted.
 
 - Only running containers in the `predictiveops` Compose project are eligible.
 - Ports must be declared by the target image (API port 8000 is explicitly supported).

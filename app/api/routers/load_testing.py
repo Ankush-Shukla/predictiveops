@@ -1,6 +1,7 @@
 # ruff: noqa: E501, E701, E702, E401, I001
 from __future__ import annotations
 import ipaddress
+import os
 from datetime import UTC, datetime
 import httpx
 from docker.errors import DockerException, NotFound
@@ -82,7 +83,7 @@ async def start_load_test(request:LoadTestRequest,state:ApiState=Depends(get_sta
     except DockerException as exc: raise HTTPException(503,detail=f"Docker API error: {exc}") from exc
     payload=request.model_dump(exclude={"container_id"}); payload.update({"service":service,"target_ip":address})
     try:
-        async with httpx.AsyncClient(base_url="http://load-generator:8001",timeout=5.0,trust_env=False) as session:
+        async with httpx.AsyncClient(base_url="http://load-generator:8001",timeout=5.0,trust_env=False,headers={"X-Load-Generator-Token": os.environ.get("PREDICTIVEOPS_LOAD_GENERATOR_TOKEN", "")}) as session:
             response=await session.post("/jobs",json=payload)
             if response.status_code>=400: raise HTTPException(response.status_code,detail=response.json().get("detail","Load generator rejected request"))
             result=response.json(); result["container_name"]=target.name
@@ -94,7 +95,7 @@ async def start_load_test(request:LoadTestRequest,state:ApiState=Depends(get_sta
 @router.get("/{job_id}")
 async def load_test_status(job_id:str):
     try:
-        async with httpx.AsyncClient(base_url="http://load-generator:8001",timeout=5.0,trust_env=False) as session:
+        async with httpx.AsyncClient(base_url="http://load-generator:8001",timeout=5.0,trust_env=False,headers={"X-Load-Generator-Token": os.environ.get("PREDICTIVEOPS_LOAD_GENERATOR_TOKEN", "")}) as session:
             response=await session.get(f"/jobs/{job_id}")
             if response.status_code==404: raise HTTPException(404,detail="Load test not found")
             response.raise_for_status(); return response.json()
@@ -104,7 +105,7 @@ async def load_test_status(job_id:str):
 @router.post("/{job_id}/cancel")
 async def cancel_load_test(job_id:str):
     try:
-        async with httpx.AsyncClient(base_url="http://load-generator:8001",timeout=5.0,trust_env=False) as session:
+        async with httpx.AsyncClient(base_url="http://load-generator:8001",timeout=5.0,trust_env=False,headers={"X-Load-Generator-Token": os.environ.get("PREDICTIVEOPS_LOAD_GENERATOR_TOKEN", "")}) as session:
             response=await session.post(f"/jobs/{job_id}/cancel")
             if response.status_code>=400: raise HTTPException(response.status_code,detail=response.json().get("detail"))
             return response.json()

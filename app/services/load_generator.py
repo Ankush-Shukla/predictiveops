@@ -1,8 +1,8 @@
 # ruff: noqa: E501, E701, E702, E401, I001
 from __future__ import annotations
-import asyncio, ipaddress, math, statistics, time, uuid
+import asyncio, ipaddress, math, os, secrets, statistics, time, uuid
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Gauge, generate_latest
@@ -119,8 +119,13 @@ async def execute(job_id: str, config: LoadJob) -> None:
 @app.get("/health")
 def health() -> dict: return {"status":"ok"}
 
+def verify_internal_token(x_load_generator_token: str = Header(default="")) -> None:
+    expected = os.environ.get("PREDICTIVEOPS_LOAD_GENERATOR_TOKEN", "")
+    if not expected or not secrets.compare_digest(x_load_generator_token, expected):
+        raise HTTPException(403, "Invalid internal load-generator token")
+
 @app.post("/jobs", status_code=202)
-async def start_job(config: LoadJob) -> dict:
+async def start_job(config: LoadJob, _: None = Depends(verify_internal_token)) -> dict:
     if config.critical_latency_ms < config.warning_latency_ms: raise HTTPException(422,"critical latency threshold must be >= warning threshold")
     if config.critical_error_rate < config.warning_error_rate: raise HTTPException(422,"critical error threshold must be >= warning threshold")
     if any(item.get("status") in {"queued","running"} for item in jobs.values()): raise HTTPException(409,"A load test is already running")
@@ -130,12 +135,12 @@ async def start_job(config: LoadJob) -> dict:
     return jobs[job_id]
 
 @app.get("/jobs/{job_id}")
-def job_status(job_id: str) -> dict:
+def job_status(job_id: str, _: None = Depends(verify_internal_token)) -> dict:
     if job_id not in jobs: raise HTTPException(404,"Load test not found")
     return jobs[job_id]
 
 @app.post("/jobs/{job_id}/cancel")
-async def cancel_job(job_id: str) -> dict:
+async def cancel_job(job_id: str, _: None = Depends(verify_internal_token)) -> dict:
     task = tasks.get(job_id)
     if task is None or task.done(): raise HTTPException(409,"Load test is not running")
     task.cancel()
