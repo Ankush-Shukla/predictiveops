@@ -119,8 +119,8 @@ curl -i "http://$TAILSCALE_IP:8000/ready"
 ```
 
 Prometheus scrapes at 15-second intervals; the prediction pipeline samples one-minute
-windows. The host and application models remain separate. Both must pass production
-eligibility checks before readiness becomes healthy. The first prediction for a new series
+windows. The host and application models remain separate. The host model must pass production eligibility;
+an application model is additionally required when application targets are configured. The first prediction for a new series
 requires the model's full contiguous feature history.
 
 | URL | Purpose |
@@ -142,10 +142,11 @@ live remediation until its target allowlist and action path have been reviewed.
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /health`, `GET /ready` | Liveness and readiness; production requires both qualified scope models |
+| `GET /health`, `GET /ready` | Liveness and readiness; requires host model and application model only when application targets are configured |
 | `GET /v1/model` | Model metadata; production returns separate host and application models |
 | `GET /v1/sources` | Prometheus source and per-scope poller status |
 | `GET /v1/live-forecast` | Live 15/30-minute host resource guardrail forecast from Node Exporter telemetry |
+| `GET /v1/experimental/host/prediction` | Read-only synthetic-trained HGB score over live host telemetry; experimental and not production-qualified |
 | `GET /v1/series[/{id}]` | Buffered time series and latest prediction state |
 | `GET /v1/alerts`, `GET /v1/audit`, `GET /v1/policy` | Alert history, audit log and policy state |
 | `GET /metrics` | PredictiveOps Prometheus instrumentation |
@@ -153,9 +154,33 @@ live remediation until its target allowlist and action path have been reviewed.
 | `POST /v1/simulate`, canary routes | Development-only; not registered when `ENV=production` |
 
 The production API polls host metrics and configured application targets independently. A series
-needs at least the model's required contiguous one-minute history before the first prediction.
+needs at least the model's required contiguous one-minute history before the first supervised prediction.
 Missing exporters, missing metrics, stale samples and unqualified models are reported as source or
 readiness failures; they are never converted into a healthy zero-valued prediction.
+
+### Experimental ML score on live host telemetry
+
+For a live ML demonstration without pretending synthetic labels are real incidents, train an isolated
+host-scope model from host-only synthetic CPU, memory and disk fault scenarios, then score the actual
+Node Exporter metrics buffered by Prometheus. The model lives under
+`artifacts/models/experimental-host`; it never replaces the production host or application champion.
+
+```bash
+docker compose build trainer api frontend
+docker compose run --rm --no-deps trainer python scripts/train_experimental_host.py
+docker compose up -d --no-deps api frontend
+```
+
+The script evaluates the model on a chronological held-out synthetic test segment and reports its gates.
+It installs the artifact only in the isolated experimental directory, even if a gate fails; the gate result
+remains visible in the dashboard. The experimental endpoint requires 30 contiguous one-minute live host
+samples and has no alert-policy or remediation side effects.
+
+**Interpretation:** this is synthetic training applied to real host inputs. Its probability is not evidence
+of real-world calibration or production failure accuracy. The separate live resource forecast panel uses
+a robust Theil-Sen trend estimator to project CPU, memory and disk guardrail crossings; that is a capacity
+forecast, not a failure probability. Both are observational signals. Production ML qualification still
+requires representative labelled real incidents and independent validation.
 
 ## Alert policy and safe remediation
 
