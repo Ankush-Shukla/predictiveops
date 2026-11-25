@@ -31,6 +31,16 @@ def _bounded(value: float) -> float:
     return round(min(100.0, max(0.0, value)), 2)
 
 
+def _theil_sen_slope(values: list[float]) -> float:
+    """Median of all pairwise slopes; less sensitive to isolated metric spikes."""
+    slopes = [
+        (right - left) / (right_index - left_index)
+        for left_index, left in enumerate(values)
+        for right_index, right in enumerate(values[left_index + 1 :], start=left_index + 1)
+    ]
+    return median(slopes) if slopes else 0.0
+
+
 def _crossing_minutes(current: float, slope: float, threshold: float) -> int | None:
     if current >= threshold:
         return 0
@@ -72,8 +82,8 @@ def forecast_host_metrics(frame: pd.DataFrame, *, series_id: str) -> dict:
     for metric, (warning_limit, critical_limit) in RESOURCE_LIMITS.items():
         values = [float(value) for value in ordered[metric].tail(16)]
         current = values[-1]
-        # Median one-minute delta is robust to isolated scrape spikes.
-        slope = median(right - left for left, right in zip(values, values[1:], strict=False))
+        # Theil-Sen slope uses all pairs in the recent window and resists isolated spikes.
+        slope = _theil_sen_slope(values)
         forecast_15 = _bounded(current + slope * 15)
         forecast_30 = _bounded(current + slope * FORECAST_HORIZON_MINUTES)
 
@@ -117,7 +127,7 @@ def forecast_host_metrics(frame: pd.DataFrame, *, series_id: str) -> dict:
         "samples_available": len(frame),
         "samples_used": REQUIRED_HISTORY,
         "horizon_minutes": FORECAST_HORIZON_MINUTES,
-        "method": "robust_median_slope",
+        "method": "theil_sen_linear_trend",
         "risk_semantics": "capacity_pressure_index_not_probability",
         "generated_at": pd.Timestamp.now(tz="UTC").isoformat(),
         "metrics": results,
