@@ -122,6 +122,8 @@ def experimental_host_prediction(state: ApiState = Depends(get_state)) -> dict:
         "buffered_samples": buffered, "required_history_minutes": predictor.required_history,
         "history": [{"as_of": item.as_of, "probability": item.probability} for item in scored],
         "metrics": {name: float(frame.iloc[-1][name]) for name in predictor.metric_columns},
+        "quality_gates_passed": (predictor.bundle.metadata.get("evaluation", {}).get("gates", {}).get("passed") is True),
+        "evaluation": predictor.bundle.metadata.get("evaluation", {}),
         "disclaimer": "EXPERIMENTAL: trained on synthetic host-fault scenarios and applied to live host metrics. Not production-qualified; no alerts or remediation are triggered.",
     }
 
