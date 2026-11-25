@@ -71,7 +71,14 @@ services:
       PREDICTIVEOPS_REMEDIATION_ENABLED: ${PREDICTIVEOPS_REMEDIATION_ENABLED:-false}
       PREDICTIVEOPS_DRY_RUN: ${PREDICTIVEOPS_DRY_RUN:-true}
       PREDICTIVEOPS_REMEDIATION_TARGETS: '{}'
-    volumes: [ "artifacts:/srv/artifacts" ]
+      PREDICTIVEOPS_OPS_DB: /srv/artifacts/ops_incidents.sqlite
+      PREDICTIVEOPS_DOCKER_PROJECT: predictiveops
+      PREDICTIVEOPS_STRESS_IMAGE: predictiveops-runtime:local
+    # POC only: Docker socket access enables container controls and isolated stress workers.
+    user: "0:0"
+    volumes:
+      - "artifacts:/srv/artifacts"
+      - "/var/run/docker.sock:/var/run/docker.sock"
     restart: unless-stopped
 
   frontend:
