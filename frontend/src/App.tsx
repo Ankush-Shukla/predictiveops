@@ -829,7 +829,7 @@ function ManagedContainerTable({rows,onAction,onLogs}:{rows:AnyRecord[];onAction
     <td><span className={`status-pill ${row.status === "running" ? "success" : "danger"}`}>{row.status}</span></td>
     <td>{row.exit_code ?? "—"}{row.oom_killed ? " · OOM" : ""}</td>
     <td className="container-actions"><button onClick={()=>onLogs(row.id)} title="View logs"><Terminal size={13}/>Logs</button>
-      {row.can_control && <><button onClick={()=>onAction(row.id,"restart")} title="Restart"><RotateCcw size={13}/>Restart</button><button onClick={()=>onAction(row.id,"stop")} title="Stop"><Square size={12}/>Stop</button><button className="danger-action" onClick={()=>onAction(row.id,"kill")} title="Kill"><Skull size={13}/>Kill</button></>}
+      {row.can_control && <>{row.status !== "running" && <button onClick={()=>onAction(row.id,"start")} title="Start"><Play size={13}/>Start</button>}{row.status === "running" && <><button onClick={()=>onAction(row.id,"restart")} title="Restart"><RotateCcw size={13}/>Restart</button><button onClick={()=>onAction(row.id,"stop")} title="Stop"><Square size={12}/>Stop</button><button className="danger-action" onClick={()=>onAction(row.id,"kill")} title="Kill"><Skull size={13}/>Kill</button></>}</>}
       {!row.can_control && <span className="container-id">API protected</span>}
     </td></tr>)}</tbody></table></div>;
 }
