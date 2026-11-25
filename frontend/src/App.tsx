@@ -378,14 +378,14 @@ function App() {
           {page === "Predictions" && <>
             <LiveForecastPanel forecast={data.liveForecast}/>
             <section className="panel full-panel stress-panel">
-              <PanelTitle title="Stress test · virtual users" subtitle="Create isolated worker processes to measure how many concurrent users this host can sustain"/>
+              <PanelTitle title="Host capacity stress test" subtitle="Apply bounded memory pressure with isolated temporary workers and observe the host response"/>
               <div className="stress-config">
-                <label>MAX VIRTUAL USERS
+                <label>MAX WORKERS
                   <input type="number" min={1} max={10} step={1} value={stressMaxUsers}
                     onChange={event => setStressMaxUsers(Math.max(1, Math.min(10, Number(event.target.value) || 1)))}
                     disabled={stressBusy || stressRun?.status === "running"}/>
                 </label>
-                <label>TEST DURATION (SECONDS)
+                <label>OBSERVATION WINDOW (SECONDS)
                   <input type="number" min={5} max={60} step={5} value={stressDuration}
                     onChange={event => setStressDuration(Math.max(5, Math.min(60, Number(event.target.value) || 5)))}
                     disabled={stressBusy || stressRun?.status === "running"}/>
@@ -394,10 +394,10 @@ function App() {
                   <Play size={14}/>{stressBusy ? "Starting…" : stressRun?.status === "running" ? "Test running…" : "Start stress test"}
                 </button>
               </div>
-              <p className="stress-help">Safety limits: 1–10 workers, 5–60 seconds, 32 MB RAM and 0.1 CPU per worker. Workers have no network access and are removed when the test ends.</p>
+              <p className="stress-help">Safety limits: 1–10 isolated workers, 5–60 seconds, 32 MB RAM and 0.1 CPU per worker. This is a host memory-pressure probe, not an HTTP request/load test. Workers have no network access, are hidden from the normal container inventory and are removed at completion. Capacity failures are written to Alerts & audit.</p>
               {stressRun && <div className="stress-result">
                 <span className={stressRun.status === "running" ? "status-pill warning" : stressRun.status === "error" ? "status-pill danger" : "status-pill success"}>{String(stressRun.status).replace(/_/g," ")}</span>
-                <b>{stressRun.users_started ?? 0} / {stressRun.max_users ?? stressMaxUsers} virtual users started</b>
+                <b>{stressRun.users_started ?? 0} / {stressRun.max_users ?? stressMaxUsers} workers started</b>
                 <span>{stressRun.failure ?? (stressRun.status === "running" ? "Measuring capacity…" : "Run completed")}</span>
               </div>}
             </section>
@@ -439,7 +439,7 @@ function App() {
             </div>
             <pre className="live-log-output">{liveLogs || "No log output available for this container."}</pre>
           </section>}
-          {page === "Alerts & audit" && <section className="content-grid stacked-panels"><div className="panel"><PanelTitle title="Infrastructure alerts" subtitle="Pending and firing Prometheus alerts"/><InfraAlerts data={infraAlerts}/></div><div className="panel"><PanelTitle title="Recent alerts" subtitle="Policy-generated service alerts"/><RecordTable rows={data.alerts} empty="No alert records returned."/></div><div className="panel"><PanelTitle title="Remediation audit" subtitle="Executed, dry-run, blocked and skipped decisions"/><RecordTable rows={data.audit} empty="No remediation decisions recorded."/></div></section>}
+          {page === "Alerts & audit" && <section className="content-grid stacked-panels"><div className="panel"><PanelTitle title="Infrastructure alerts" subtitle="Pending and firing Prometheus alerts, including stress-test capacity events"/><InfraAlerts data={infraAlerts}/></div><div className="panel"><PanelTitle title="Recent alerts" subtitle="Policy alerts and recorded stress-test capacity warnings"/><RecordTable rows={data.alerts} empty="No alert records returned."/></div><div className="panel"><PanelTitle title="Remediation audit" subtitle="Container actions, stress-test lifecycle, and executed, dry-run, blocked or failed decisions"/><RecordTable rows={data.audit} empty="No remediation decisions recorded."/></div></section>}
 
           <footer className="footer"><span>PredictiveOps <b>·</b> Reliability intelligence</span><span>Refresh interval 10s <b>·</b> {loading ? "Connecting…" : "API snapshot loaded"}</span></footer>
         </div>
