@@ -402,8 +402,6 @@ def _run_stress(path: Path, run_id: str, max_users: int, duration: int,
         client = _client()
         client.images.pull(STRESS_IMAGE)
         for index in range(1, max_users + 1):
-            if time.monotonic() - started_clock >= duration:
-                break
             worker = client.containers.run(
                 STRESS_IMAGE, ["python", "-u", "-c", STRESS_CODE], detach=True,
                 name=f"predictiveops-stress-{run_id}-{index}",
