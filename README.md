@@ -173,8 +173,9 @@ docker compose up -d --no-deps api frontend
 ```
 
 The trainer uses host resource signals (CPU, memory and disk I/O) to define its synthetic labels, trains
-a host-scope HGB model, evaluates it on a chronological held-out test segment, and promotes only within
-the isolated experimental model directory when the configured gates pass. The dashboard's **Live host
+a host-scope HGB model, evaluates it on a chronological held-out test segment, and records its held-out quality-gate results. The artifact is installed only in the isolated
+experimental directory (even if a gate fails), because this endpoint is read-only and cannot affect
+production policy or remediation. Gate failures remain visible in the dashboard. The dashboard's **Live host
 failure-risk inference** panel then scores the current real Prometheus host series and shows its recent
 probability trend. The first score requires 30 contiguous one-minute samples; the poller backfills its
 configured lookback window when available.
