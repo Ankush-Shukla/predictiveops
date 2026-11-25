@@ -9,6 +9,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+
+import pandas as pd
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -45,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
         | (frame["memory_pct"] >= 95.0)
         | (frame["disk_io_util_pct"] >= 98.0)
     )
-    frame = __import__("pandas").concat(
+    frame = pd.concat(
         [add_labels(group, args.horizon) for _, group in frame.groupby("series_id", sort=False)],
         ignore_index=True,
     )
