@@ -59,73 +59,6 @@ function App() {
   const [history, setHistory] = useState<AnyRecord | null>(null);
   const [infraAlerts, setInfraAlerts] = useState<AnyRecord | null>(null);
   const [coverage, setCoverage] = useState<AnyRecord | null>(null);
-  const [opsContainers, setOpsContainers] = useState<AnyRecord[]>([]);
-  const [opsIncidents, setOpsIncidents] = useState<AnyRecord[]>([]);
-  const [selectedOpsContainer, setSelectedOpsContainer] = useState("");
-  const [selectedIncident, setSelectedIncident] = useState<AnyRecord | null>(null);
-  const [opsLogs, setOpsLogs] = useState("");
-  const [opsMessage, setOpsMessage] = useState("");
-  const [stressLimit, setStressLimit] = useState(40);
-  const [stressDuration, setStressDuration] = useState(60);
-  const refreshOps = useCallback(async () => {
-    const [containers, incidents] = await Promise.all([
-      get("/v1/ops/containers").catch(() => null),
-      get("/v1/ops/incidents?limit=100").catch(() => null),
-    ]);
-    if (containers?.containers) {
-      setOpsContainers(containers.containers);
-      setSelectedOpsContainer(current => current || containers.containers[0]?.id || "");
-    }
-    if (incidents?.incidents) setOpsIncidents(incidents.incidents);
-  }, []);
-  useEffect(() => {
-    void refreshOps();
-    const timer = window.setInterval(() => void refreshOps(), 7000);
-    return () => window.clearInterval(timer);
-  }, [refreshOps]);
-  useEffect(() => {
-    if (page !== "Live Logs" || !selectedOpsContainer) return;
-    const load = async () => {
-      const result = await get(`/v1/ops/containers/${selectedOpsContainer}/logs?tail=300`).catch(() => null);
-      setOpsLogs(result?.logs ?? "Unable to load logs for this container.");
-    };
-    void load();
-    const timer = window.setInterval(() => void load(), 3000);
-    return () => window.clearInterval(timer);
-  }, [page, selectedOpsContainer]);
-  const runContainerAction = async (id: string, action: string) => {
-    try {
-      const response = await fetch(`/v1/ops/containers/${id}/action`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
-      });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.detail ?? "Container action failed");
-      setOpsMessage(`${action.toUpperCase()} completed for ${body.container.name}`);
-      await refreshOps();
-    } catch (error) { setOpsMessage(error instanceof Error ? error.message : String(error)); }
-  };
-  const startStressTest = async () => {
-    try {
-      const response = await fetch("/v1/ops/stress/start", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ max_processes: stressLimit, duration_seconds: stressDuration }),
-      });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.detail ?? "Stress test could not start");
-      setOpsMessage(`Stress run started: up to ${body.simulated_user_limit} simulated users · ${body.limits.memory} memory cap`);
-      await refreshOps();
-    } catch (error) { setOpsMessage(error instanceof Error ? error.message : String(error)); }
-  };
-  const stopStressTest = async (id: string) => {
-    try {
-      const response = await fetch(`/v1/ops/stress/${id}/stop`, { method: "POST" });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.detail ?? "Could not stop stress run");
-      setOpsMessage("Stress test stopped.");
-      await refreshOps();
-    } catch (error) { setOpsMessage(error instanceof Error ? error.message : String(error)); }
-  };
 
   const refreshLive = useCallback(async () => {
     const [nextHistory, nextAlerts, nextCoverage] = await Promise.all([
@@ -277,8 +210,6 @@ function App() {
           <button className={page === "Overview" ? "nav-item active" : "nav-item"} onClick={() => activePage("Overview")}><LayoutDashboard size={17}/>Overview</button>
           <button className={page === "Predictions" ? "nav-item active" : "nav-item"} onClick={() => activePage("Predictions")}><Gauge size={17}/>Predictions<span className="nav-count">{serviceCount}</span></button>
           <button className={page === "Containers" ? "nav-item active" : "nav-item"} onClick={() => activePage("Containers")}><Server size={17}/>Containers<span className="nav-count">{containerCount}</span></button>
-          <button className={page === "Crash Reports" ? "nav-item active" : "nav-item"} onClick={() => activePage("Crash Reports")}><AlertTriangle size={17}/>Crash Reports<span className="nav-count">{opsIncidents.length}</span></button>
-          <button className={page === "Live Logs" ? "nav-item active" : "nav-item"} onClick={() => activePage("Live Logs")}><Activity size={17}/>Live Logs</button>
           <button className={page === "Alerts & audit" ? "nav-item active" : "nav-item"} onClick={() => activePage("Alerts & audit")}><Bell size={17}/>Alerts & audit<span className="nav-count">{alertCount}</span></button>
         </nav>
         <div className="nav-label monitoring-label">MONITORING</div>
@@ -538,54 +469,9 @@ function App() {
               <PanelTitle title="Container resource inventory" subtitle="One row per container · refreshed every 10 seconds"/>
               {data.containerStatus?.error && <div className="notice warning"><AlertTriangle size={16}/><div><b>Container telemetry unavailable</b><span>{data.containerStatus.error}</span></div></div>}
               <ContainerTable rows={containerRows}/>
-              <div style={{marginTop:22,borderTop:"1px solid #263244",paddingTop:18}}>
-                <PanelTitle title="Container controls" subtitle="Actions apply to containers in this PredictiveOps Compose project"/>
-                {opsMessage && <div className="model-note">{opsMessage}</div>}
-                <div className="table-scroll"><table><thead><tr><th>CONTAINER</th><th>STATE</th><th>EXIT</th><th>OPERATIONS</th><th>DETAILS</th></tr></thead><tbody>
-                  {opsContainers.map(c => <tr key={c.id}>
-                    <td><b>{c.name}</b><div style={{fontSize:10,color:"#8491a4"}}>{c.service}</div></td>
-                    <td><span className={`status-pill ${c.status === "running" ? "success" : c.status === "exited" ? "danger" : "warning"}`}>{c.status}</span></td>
-                    <td>{c.exit_code ?? "—"}{c.oom_killed ? " · OOM" : ""}</td>
-                    <td><div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                      {(["start","stop","restart","kill"] as const).map(action => <button key={action} className="icon-button" style={{width:"auto",padding:"5px 8px",fontSize:10}} onClick={() => void runContainerAction(c.id, action)} disabled={action === "start" ? c.status === "running" : c.status !== "running"}>{action.toUpperCase()}</button>)}
-                    </div></td>
-                    <td><button className="icon-button" style={{width:"auto",padding:"5px 8px",fontSize:10}} onClick={() => {setSelectedOpsContainer(c.id);setPage("Live Logs");}}>LOGS</button></td>
-                  </tr>)}
-                </tbody></table></div>
-              </div>
-              <div style={{marginTop:22,borderTop:"1px solid #263244",paddingTop:18}}>
-                <PanelTitle title="Stress test" subtitle="Each worker process represents one simulated concurrent user. Runs in an isolated, resource-limited container."/>
-                <div style={{display:"flex",gap:12,alignItems:"end",flexWrap:"wrap"}}>
-                  <label style={{display:"grid",gap:6,fontSize:11,color:"#aab6c8"}}>SIMULATED USERS <input type="number" min="1" max="100" value={stressLimit} onChange={e=>setStressLimit(Math.max(1,Math.min(100,Number(e.target.value))))} style={{background:"#0c1420",color:"#e7edf6",border:"1px solid #2a3749",padding:9,borderRadius:7,width:120}}/></label>
-                  <label style={{display:"grid",gap:6,fontSize:11,color:"#aab6c8"}}>DURATION (SECONDS) <input type="number" min="10" max="180" value={stressDuration} onChange={e=>setStressDuration(Math.max(10,Math.min(180,Number(e.target.value))))} style={{background:"#0c1420",color:"#e7edf6",border:"1px solid #2a3749",padding:9,borderRadius:7,width:140}}/></label>
-                  <button className="icon-button" style={{width:"auto",padding:"9px 14px"}} onClick={() => void startStressTest()}>START STRESS TEST</button>
-                </div>
-                <div className="model-note">Hard limits: 256 MiB RAM · 1 CPU core · 128 PIDs · maximum 180 seconds. The test will not deliberately exhaust the host.</div>
-                {opsContainers.filter(c=>c.stress_test).map(c=><div key={c.id} className="detail-row"><span>{c.name} · {c.status}</span>{c.status === "running" && <button className="icon-button" style={{width:"auto",padding:"5px 8px"}} onClick={()=>void stopStressTest(c.id)}>STOP TEST</button>}</div>)}
-              </div>
             </section>
             <section className="container-grafana-link"><span>Historical container trends, filesystem I/O and network charts</span><a href={"http://" + window.location.hostname + ":3000/d/predictiveops/predictiveops"} target="_blank" rel="noreferrer">Open infrastructure dashboard <ExternalLink size={13}/></a></section>
           </>}
-          {page === "Crash Reports" && <section className="panel full-panel">
-            <PanelTitle title="Historical crash reports" subtitle="Non-zero exits, OOM kills and Docker-reported container failures captured during dashboard polling"/>
-            {opsIncidents.length ? <div className="table-scroll"><table><thead><tr><th>TIME</th><th>CONTAINER</th><th>SERVICE</th><th>REASON</th><th>EXIT</th><th>REPORT</th></tr></thead><tbody>
-              {opsIncidents.map(item=><tr key={item.id}><td>{time(item.captured_at)}</td><td>{item.container_name}</td><td>{item.service ?? "—"}</td><td>{item.reason}</td><td>{item.exit_code ?? "—"}{item.oom_killed ? " · OOM" : ""}</td><td><button className="icon-button" style={{width:"auto",padding:"5px 8px"}} onClick={()=>setSelectedIncident(item)}>OPEN</button></td></tr>)}
-            </tbody></table></div> : <EmptyState icon={<CheckCircle2/>} title="No crash incidents captured" text="The incident history will populate when a managed container exits abnormally. The dashboard polls Docker every 7 seconds."/ >}
-            {selectedIncident && <div style={{marginTop:18}}><PanelTitle title={`Incident #${selectedIncident.id} · ${selectedIncident.container_name}`} subtitle={selectedIncident.reason}/>
-              <Detail label="Started" value={time(selectedIncident.started_at)}/><Detail label="Finished" value={time(selectedIncident.finished_at)}/><Detail label="Captured" value={time(selectedIncident.captured_at)}/><Detail label="Exit code" value={selectedIncident.exit_code}/><Detail label="OOM killed" value={selectedIncident.oom_killed ? "Yes" : "No"}/>
-              <pre style={{whiteSpace:"pre-wrap",maxHeight:420,overflow:"auto",background:"#080e17",padding:14,borderRadius:8,fontSize:11,color:"#b9c7d9"}}>{selectedIncident.logs}</pre>
-            </div>}
-          </section>}
-          {page === "Live Logs" && <section className="panel full-panel">
-            <PanelTitle title="Live container logs" subtitle="Refreshes every 3 seconds · stdout and stderr with timestamps"/>
-            <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
-              <select value={selectedOpsContainer} onChange={e=>setSelectedOpsContainer(e.target.value)} style={{background:"#0c1420",color:"#e7edf6",border:"1px solid #2a3749",padding:9,borderRadius:7,minWidth:260}}>
-                {opsContainers.map(c=><option key={c.id} value={c.id}>{c.name} · {c.status}</option>)}
-              </select>
-              <button className="icon-button" style={{width:"auto",padding:"8px 12px"}} onClick={()=>setPage("Containers")}>CONTAINER CONTROLS</button>
-            </div>
-            <pre style={{whiteSpace:"pre-wrap",overflow:"auto",maxHeight:"65vh",minHeight:280,background:"#080e17",padding:14,borderRadius:8,fontSize:11,color:"#b9c7d9"}}>{opsLogs || "Select a container to load logs."}</pre>
-          </section>}
           {page === "Alerts & audit" && <section className="content-grid stacked-panels"><div className="panel"><PanelTitle title="Infrastructure alerts" subtitle="Pending and firing Prometheus alerts"/><InfraAlerts data={infraAlerts}/></div><div className="panel"><PanelTitle title="Recent alerts" subtitle="Policy-generated service alerts"/><RecordTable rows={data.alerts} empty="No alert records returned."/></div><div className="panel"><PanelTitle title="Remediation audit" subtitle="Executed, dry-run, blocked and skipped decisions"/><RecordTable rows={data.audit} empty="No remediation decisions recorded."/></div></section>}
 
           <footer className="footer"><span>PredictiveOps <b>·</b> Reliability intelligence</span><span>Refresh interval 10s <b>·</b> {loading ? "Connecting…" : "API snapshot loaded"}</span></footer>
