@@ -1,43 +1,44 @@
 # PredictiveOps
 
-Predictive failure detection and ML-driven deployment validation for containerized applications
-(MCA Semester I minor project, JIMS Engineering Management Technical Campus).
+Predictive failure detection for two independent scopes: whole-host resource exhaustion and per-application degradation. The platform combines Prometheus telemetry, calibrated ML inference, alert policy, audit history and Grafana observability.
 
 PredictiveOps scores multivariate service metrics with a calibrated model that outputs the probability of a
 failure within the next 15-30 minutes, turns that signal into sustained-risk alerts, optionally triggers
 tightly constrained remediation, gates model promotion in CI, and judges canary releases against a baseline
 with the same model.
 
-> **Read this first.** All training and demo data is **synthetic** (`data_source = "synthetic"` everywhere).
-> Results show the pipeline works under controlled conditions; they are **not** evidence that it predicts real
-> production failures. The model detects almost nothing when a fault mechanism was absent from training (so keep
-> threshold alerts too), and the canary only catches faults that begin before its decision point. Details and
-> numbers: [`docs/evaluation.md`](docs/evaluation.md). `docker compose up` has not been executed by the author;
-> see [Verification status](#verification-status).
+> **Production safety:** synthetic data is for development and CI only. Production inference rejects synthetic-only
+> models and models without passing evaluation gates. These controls are **not** evidence of production accuracy; only evaluation on reviewed real incidents can establish that. A production deployment requires two separately trained
+> models and reviewed incident labels: one for host metrics and one for application metrics. Until both are
+> available, `/ready` returns HTTP 503 and the dashboard reports the exact blocker. See
+> [the production telemetry contract](docs/production-telemetry.md).
 
 ## How it fits together
 
 ```mermaid
 flowchart LR
-  APP[demo target<br/>simulated metrics] --> PROM[Prometheus]
-  NODE[Node Exporter] --> PROM
-  PROM -->|query_range| POLL[poller]
+  NODE[Node Exporter] --> PROM[Prometheus]
+  CAD[cAdvisor] --> PROM
+  APP[Instrumented applications] --> PROM
+  PROM --> HOST[Host query adapter]
+  PROM --> SERVICE[Application query adapter]
+  HOST --> HB[Host feature buffer] --> HM[Host model]
+  SERVICE --> AB[Application feature buffers] --> AM[Application models]
   subgraph API[PredictiveOps API]
-    POLL --> ING[ingestion + series buffer]
-    ING --> FEAT[FeatureBuilder<br/>152 features] --> MODEL[calibrated model]
-    MODEL --> POL[alert policy] --> ACT[allowlisted remediation<br/>off + dry-run by default]
-    MODEL --> CAN[canary evaluator]
+    HM --> POLICY[Alert policy + audit]
+    AM --> POLICY
+    POLICY --> SAFE[Allowlisted remediation<br/>disabled + dry-run]
   end
-  POL --> DB[(SQLite audit)]
-  API -->|/metrics| PROM --> GRAF[Grafana]
+  API -->|/metrics| PROM
+  PROM --> GRAF[Grafana]
   subgraph CI[Offline / CI]
-    SYN[synthetic data] --> TRAIN[train + calibrate + evaluate] --> GATES{F1 / FPR gates} -->|pass| CHAMP[champion model + MLflow]
+    SYN[Synthetic development data] --> TEST[Tests and pipeline validation]
   end
-  CHAMP --> MODEL
 ```
 
 More detail (data flow, storage, leakage controls, API contracts): [`docs/architecture.md`](docs/architecture.md).
 Synopsis requirement mapping: [`docs/requirements_traceability.md`](docs/requirements_traceability.md).
+Evaluation methodology and release gates: [`docs/evaluation.md`](docs/evaluation.md).
 
 ## Quick start (no Docker)
 
@@ -49,71 +50,111 @@ python scripts/train.py --promote            # trains, evaluates, enforces gates
 uvicorn app.api.main:app_factory --factory --port 8000
 ```
 
-Open http://localhost:8000 (dashboard) or http://localhost:8000/docs (Swagger). Then
+Open http://localhost:8000 (legacy dashboard) or http://localhost:8000/docs (Swagger). The containerized stack uses the new React console. Then
 `python scripts/demo_walkthrough.py` runs a narrated tour of every feature; [`docs/DEMO.md`](docs/DEMO.md) is the
 presenter's guide.
 
 `scripts/train.py` options: `--model-type {hgb,logreg,xgb}`, `--enforce-gates` (exit 2 when gates fail),
 `--no-mlflow`, `--promote`. MLflow data lands in `artifacts/mlflow.db` (`mlflow ui --backend-store-uri sqlite:///artifacts/mlflow.db`).
 
-## Full stack with Docker Compose
+## Production stack with Docker Compose
+
+The production Compose stack contains the API, React console, Prometheus, Node Exporter,
+cAdvisor and Grafana. It contains **no demo application or canary containers**. Host telemetry
+is collected automatically. Application telemetry is opt-in per service through Prometheus
+file-based discovery.
+
+### 1. Prepare labelled training data
+
+Create two one-minute datasets and place them in the ignored local `training-data/` directory:
+
+- `training-data/host.csv.gz` — host metrics and host incident labels.
+- `training-data/application.csv.gz` — application metrics and application incident labels.
+
+The datasets must include the scope's metric columns, `timestamp`, `series_id`,
+`is_unhealthy`, and a truthful `data_source` provenance value. Labels must be derived from
+reviewed incident/impact records or an explicitly documented operational definition. See
+[production telemetry and training requirements](docs/production-telemetry.md). Do not label
+synthetic data as production.
+
+### 2. Train and promote both models
 
 ```bash
-cp .env.example .env     # set GRAFANA_ADMIN_PASSWORD (required); optionally PREDICTIVEOPS_API_KEY, DEMO_ADMIN_TOKEN
-docker compose up --build
+cp .env.example .env
+# Set TAILSCALE_IP and a strong GRAFANA_ADMIN_PASSWORD in .env.
+mkdir -p training-data
+# Place host.csv.gz and application.csv.gz in training-data/.
+docker compose --profile training run --build --rm trainer
 ```
 
-| URL | What |
+The trainer evaluates each scope independently and promotes only if its quality gates pass.
+It writes champions under `artifacts/models/host` and `artifacts/models/application`.
+Training is an explicit operation; Compose never generates or promotes synthetic models
+during API startup.
+
+### 3. Configure application discovery
+
+For each application, expose the metrics contract in
+[`docs/production-telemetry.md`](docs/production-telemetry.md), apply the Docker label
+`predictiveops.service=<service>`, and add its scrape target to
+`prometheus/targets/applications.yml`:
+
+```yaml
+- targets: ["your-app:8000"]
+  labels:
+    service: your-app
+    environment: production
+```
+
+Set the matching comma-separated service names in
+`PREDICTIVEOPS_PROMETHEUS_APPLICATION_SERVICES` in `.env`. The app target and configured
+service name must match exactly.
+
+### 4. Start the stack
+
+```bash
+docker compose up --build -d
+docker compose ps
+curl -i "http://$TAILSCALE_IP:8000/ready"
+```
+
+Prometheus scrapes at 15-second intervals; the prediction pipeline samples one-minute
+windows. The host and application models remain separate. Both must pass production
+eligibility checks before readiness becomes healthy. The first prediction for a new series
+requires the model's full contiguous feature history.
+
+| URL | Purpose |
 |---|---|
-| http://localhost:3000 | Grafana (`admin` / your password), dashboard "PredictiveOps" |
-| http://localhost:8000 | PredictiveOps dashboard and API |
-| http://localhost:9090 | Prometheus (alert rules under Alerts) |
-| http://localhost:8001 | demo target (`/metrics`, `/work`, `/state`) |
+| http://TAILSCALE_IP:8000 | React console |
+| http://TAILSCALE_IP:3000 | Grafana |
+| http://localhost:9090 | Prometheus, if published locally by your deployment |
+| http://TAILSCALE_IP:8000/docs | API documentation |
 
-The one-shot `trainer` service generates data, trains, enforces the gates and promotes the model into a shared
-volume; `api` starts only after it succeeds. The API polls Prometheus for the `demo-app` service and applies the
-alert policy. The demo is **accelerated**: one 5-second step stands for one model "minute".
+Prometheus application targets are discovered from the mounted
+`prometheus/targets/applications.yml`. Node Exporter and cAdvisor provide host/container
+telemetry. Application latency and error-rate alerts use the standard
+`predictiveops_app_*` metric contract.
 
-```bash
-curl -X POST localhost:8001/fault -H "X-Admin-Token: $DEMO_ADMIN_TOKEN" -H 'content-type: application/json' \
-     -d '{"fault_type":"memory_leak","ramp_minutes":30}'       # disabled unless DEMO_ADMIN_TOKEN is set
-curl localhost:8000/v1/alerts ; curl localhost:8000/v1/audit ; curl localhost:8000/v1/sources
-curl -X POST localhost:8001/fault/clear -H "X-Admin-Token: $DEMO_ADMIN_TOKEN"
-docker compose --profile canary up -d     # second demo instance labelled as a canary
-docker compose --profile mlflow up -d     # MLflow UI on :5000
-```
-
-Real container restarts are **opt-in** and read the security note first: `docker-compose.remediation.yml`
-mounts the Docker socket (effectively root on the host).
-
-The demo target's resource metrics are *simulated* with the same fault models that generated the training data, so
-the model sees in-distribution inputs. Node Exporter is scraped and graphed but the model does **not** use it
-(different scales). Using real metrics means changing the PromQL in `app/services/prometheus_client.py` **and
-retraining on real data**.
+Remediation stays disabled and dry-run by default. Do not mount the Docker socket or enable
+live remediation until its target allowlist and action path have been reviewed.
 
 ## API in brief
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /health`, `/ready` | liveness, readiness (503 until a model is loaded) |
-| `GET /v1/model` | version, threshold, evaluation, data source |
-| `POST /v1/predict` | score the latest sample from >= 30 contiguous 1-minute samples |
-| `POST /v1/metrics/ingest` | buffer, score every new minute, run the alert policy (`X-API-Key` if configured) |
-| `GET /v1/policy`, `POST /v1/policy/evaluate`, `GET /v1/alerts`, `GET /v1/audit` | policy state, preview, alerts, remediation audit |
-| `POST /v1/canary/evaluate`, `GET /v1/canary[/{id}]` | canary decision and history (`X-API-Key` if configured) |
-| `POST /v1/simulate`, `POST /v1/canary/simulate` | SYNTHETIC demos, no side effects |
-| `GET /v1/series[/{id}]`, `GET /v1/sources`, `GET /metrics` | live series, poller status, Prometheus metrics |
+| `GET /health`, `GET /ready` | Liveness and readiness; production requires both qualified scope models |
+| `GET /v1/model` | Model metadata; production returns separate host and application models |
+| `GET /v1/sources` | Prometheus source and per-scope poller status |
+| `GET /v1/series[/{id}]` | Buffered time series and latest prediction state |
+| `GET /v1/alerts`, `GET /v1/audit`, `GET /v1/policy` | Alert history, audit log and policy state |
+| `GET /metrics` | PredictiveOps Prometheus instrumentation |
+| `POST /v1/predict`, `POST /v1/metrics/ingest` | Legacy combined-model development endpoints; not used by production scope pollers |
+| `POST /v1/simulate`, canary routes | Development-only; not registered when `ENV=production` |
 
-```bash
-curl localhost:8000/v1/model
-curl -X POST localhost:8000/v1/simulate -H 'content-type: application/json' -d '{"fault_type":"memory_leak","seed":42}'
-curl -X POST localhost:8000/v1/policy/evaluate -H 'content-type: application/json' \
-     -d '{"probabilities":[0.9,0.9,0.9,0.9,0.9,0.9],"threshold":0.2}'
-curl -X POST localhost:8000/v1/metrics/ingest -H 'content-type: application/json' -d '{"series_id":"checkout","samples":[{"timestamp":"2025-01-01T00:00:00Z","cpu_pct":20,"memory_pct":50,"disk_io_util_pct":10,"network_rx_mbps":4,"network_tx_mbps":6,"request_rate_rps":90,"latency_p95_ms":110,"error_rate":0.004}]}'
-```
-Ingestion rules: samples must be 1 minute apart; duplicates and out-of-order samples are rejected; a gap clears the
-series history (features need regular spacing). Without a model the API still starts and prediction endpoints
-return `model_not_ready`.
+The production API polls host metrics and configured application targets independently. A series
+needs at least the model's required contiguous one-minute history before the first prediction.
+Missing exporters, missing metrics, stale samples and unqualified models are reported as source or
+readiness failures; they are never converted into a healthy zero-valued prediction.
 
 ## Alert policy and safe remediation
 
@@ -129,12 +170,13 @@ Remediation passes these gates in order: a configured target for the series, an 
 (900 s), an hourly cap (4), dry-run (**on by default**), and in live mode a container carrying the label
 `predictiveops.managed=true` (`rollback_canary` also needs `predictiveops.role=canary`). Nothing can run an arbitrary
 command. Cooldowns and caps are read from the SQLite audit log, so they survive restarts; every outcome is audited.
-To try a dry run: `PREDICTIVEOPS_REMEDIATION_ENABLED=true` and
-`PREDICTIVEOPS_REMEDIATION_TARGETS={"demo-live":{"container":"my-app","action":"restart_container"}}`.
+Production remediation targets are empty by default. Add a reviewed service-to-container mapping
+only after confirming the target's `predictiveops.managed=true` label. Keep dry-run enabled until
+the action has been tested against a disposable container.
 
-## Canary validation
+## Canary validation (development only)
 
-`POST /v1/canary/evaluate` takes baseline and candidate samples for a named `service`; the same model scores both and
+Canary simulation routes are not registered in production mode. `POST /v1/canary/evaluate` takes baseline and candidate samples for a named `service`; the same model scores both and
 only overlapping minutes are compared. Defaults (override with `PREDICTIVEOPS_CANARY` JSON): **hold** with fewer than
 20 scored minutes or inconclusive evidence; **rollback** for 5 consecutive minutes at >= 80 % risk while the baseline is
 not, or >= 30 % alerting minutes with mean risk >= 10 points above baseline; **promote** for <= 5 % alerting minutes
@@ -148,10 +190,10 @@ starts after the decision is promoted.** Use `{"min_observation_minutes": 60}` o
 |---|---|
 | Core | `ENV`, `LOG_LEVEL`, `LOG_JSON`, `DATA_DIR`, `SQLITE_PATH`, `MODEL_DIR`, `HORIZON_MINUTES` (15-30), `SYNTHETIC_SEED`, `INGEST_BUFFER_MINUTES` |
 | MLflow and gates | `MLFLOW_TRACKING_URI`, `MLFLOW_EXPERIMENT`, `MLFLOW_MODEL_NAME`, `GATE_MIN_F1` (0.70), `GATE_MAX_FPR` (0.05) |
-| Security | `API_KEY` (protects ingest and canary evaluate when set; empty values are ignored) |
-| Prometheus polling | `PROMETHEUS_ENABLED`, `PROMETHEUS_URL`, `PROMETHEUS_SERVICES`, `PROMETHEUS_STEP_SECONDS`, `PROMETHEUS_POLL_SECONDS`, `PROMETHEUS_LOOKBACK_STEPS` |
+| Security | `API_KEY` (protects write endpoints when set; empty values are ignored) |
+| Prometheus polling | `PROMETHEUS_ENABLED`, `PROMETHEUS_URL`, `PROMETHEUS_HOST_SERIES_ID`, `PROMETHEUS_APPLICATION_SERVICES`, `PROMETHEUS_STEP_SECONDS`, `PROMETHEUS_POLL_SECONDS`, `PROMETHEUS_LOOKBACK_STEPS` |
 | Policy and remediation | `POLICY_SUSTAIN_ALERT`, `POLICY_SUSTAIN_REMEDIATE`, `POLICY_REMEDIATE_THRESHOLD`, `REMEDIATION_ENABLED`, `DRY_RUN`, `REMEDIATION_TARGETS` (JSON), `REMEDIATION_COOLDOWN_SECONDS`, `MAX_ACTIONS_PER_HOUR` |
-| Canary | `CANARY` (JSON), `CANARY_TARGETS` (JSON) |
+| Development compatibility | `PROMETHEUS_SERVICES` (legacy combined-model polling; never use in production) |
 
 Secrets are only ever read from the environment or GitHub secrets; required ones (Grafana password) have no default.
 
@@ -175,7 +217,8 @@ artifact only if everything passes (optional remote MLflow registration through 
 |---|---|
 | `app/core`, `app/models` | settings, logging, domain definitions; schemas, model bundle, registry, predictor |
 | `app/features` | `FeatureBuilder` (backward-looking features, hashed schema shared by training and inference) |
-| `app/api`, `app/static` | FastAPI app, routers, ingestion, poller; dashboard (plain HTML/CSS/JS) |
+| `app/api`, `app/static` | FastAPI app, routers, ingestion, poller; legacy fallback dashboard |
+| `frontend` | React + TypeScript console, Vite build, Nginx reverse proxy |
 | `app/services` | series buffer, Prometheus client, canary logic and simulation |
 | `app/policies` | policy engine, allowlisted actions, SQLite audit store |
 | `data/synthetic` | reproducible simulator, labelling, scenarios |
@@ -188,16 +231,26 @@ artifact only if everything passes (optional remote MLflow registration through 
 
 ## Verification status
 
-| Verified (executed) | Not executed |
-|---|---|
-| Full test suite (160+ tests, 99 % coverage), clean-venv run, runtime-only venv | `docker build` / `docker compose up` / pulling pinned images |
-| Live end-to-end on native processes: real Prometheus 3.5.0 + node_exporter + demo target + API poller | Grafana rendering the provisioned dashboard (its PromQL was executed) |
-| Browser tests of the dashboard (Playwright/Chromium) | GitHub Actions runs |
-| `promtool`, `hadolint`, workflow and compose schema checks | Real container restart or canary stop through Docker |
+This production-hardening branch has not yet been released or deployed. GitHub Actions validation
+is being run against the latest commits; the full CI result must be green before deployment.
+The existing prototype's prior tests and native-process checks do not validate the new dual-scope
+production stack. Docker Compose deployment, Grafana rendering, real host polling, and real
+application instrumentation still require an end-to-end run on the target server.
 
-## Known limitations
+## Known limitations and release blockers
 
-* Synthetic data only; no evidence on real systems. Metrics come from the project's own simulator.
+- Real, reviewed, labelled host and application datasets have not yet been supplied. Production
+  readiness deliberately remains HTTP 503 until both models are trained from non-synthetic data
+  and pass their evaluation gates.
+- Each application must expose the documented request counter and latency histogram, and its
+  container must carry the `predictiveops.service` label. Uninstrumented applications are not
+  eligible for application-level inference.
+- The current prediction buffers are process-local and are rebuilt from Prometheus history after
+  restart. Keep Prometheus retention longer than the poller's lookback window.
+- No Alertmanager, Kubernetes integration, or multi-service dependency modelling is included.
+- Live remediation remains disabled and dry-run by default; do not enable it without a separate
+  security review and disposable-target test.
+
 * Unseen fault mechanisms are missed by the model (held-out: memory leak 2/97, error ramp 2/103 events); thresholds catch them.
 * The canary decides once, after its minimum observation period; later regressions are promoted.
 * The model does not consume Node Exporter metrics; real data requires new queries and retraining.

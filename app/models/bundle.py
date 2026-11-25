@@ -13,6 +13,7 @@ from typing import Any
 
 import joblib
 
+from app.core.domain import METRIC_COLUMNS
 from app.core.exceptions import PredictiveOpsError
 from app.features.builder import FeatureBuilder, FeatureConfig, FeatureSchema
 
@@ -40,7 +41,8 @@ class ModelBundle:
         cfg = self.schema.config
         fb = FeatureBuilder(FeatureConfig(
             windows=tuple(cfg["windows"]), lags=tuple(cfg["lags"]),
-            roc_lags=tuple(cfg["roc_lags"]), slope_window=cfg["slope_window"]))
+            roc_lags=tuple(cfg["roc_lags"]), slope_window=cfg["slope_window"],
+            metrics=tuple(cfg.get("metrics", METRIC_COLUMNS))))
         if fb.schema.schema_hash != self.schema.schema_hash:
             raise ModelSchemaMismatchError(
                 "feature schema hash mismatch: model was trained with different feature "

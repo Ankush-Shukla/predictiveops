@@ -13,13 +13,18 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.errors import register_error_handlers
 from app.api.poller import PrometheusPoller
-from app.api.routers import canary, policy, predict, simulate, system
+from app.api.routers import canary, history, policy, predict, simulate, system
 from app.api.state import ApiState
 from app.core.config import Settings, get_settings
+from app.core.domain import APPLICATION_METRIC_COLUMNS, HOST_METRIC_COLUMNS
 from app.core.exceptions import PredictiveOpsError
 from app.core.logging import configure_logging, get_logger
 from app.models.predictor import Predictor
-from app.services.prometheus_client import PrometheusClient
+from app.services.prometheus_client import (
+    APPLICATION_QUERIES,
+    HOST_QUERIES,
+    PrometheusClient,
+)
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 log = get_logger("app.api")
@@ -32,31 +37,87 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         configure_logging(settings.log_level, settings.log_json)
-        if app.state.api.predictor is None and load_model:
-            try:
-                app.state.api.set_predictor(Predictor.from_champion(settings.model_dir))
-                log.info("champion model loaded", extra={"version": app.state.api.predictor.version})
-            except PredictiveOpsError as exc:
-                log.warning("no champion model loaded", extra={"reason": str(exc)})
-        poller = None
-        if settings.prometheus_enabled and settings.prometheus_service_list:
-            client = prometheus_client or PrometheusClient(settings.prometheus_url)
-            poller = PrometheusPoller(
-                app.state.api, client, settings.prometheus_service_list,
-                step_seconds=settings.prometheus_step_seconds,
-                interval_seconds=settings.prometheus_poll_seconds,
-                lookback_steps=settings.prometheus_lookback_steps)
-            app.state.poller = poller
-            poller.start()
+        if load_model:
+            if settings.env == "production":
+                loaded: dict[str, Predictor] = {}
+                for scope in ("host", "application"):
+                    try:
+                        loaded[scope] = Predictor.from_champion(settings.model_dir / scope)
+                        log.info(
+                            "scope model loaded",
+                            extra={"scope": scope, "version": loaded[scope].version},
+                        )
+                    except PredictiveOpsError as exc:
+                        log.warning("scope model unavailable", extra={"scope": scope, "reason": str(exc)})
+                app.state.api.set_scope_predictors(loaded)
+
+                # Isolated model used exclusively by the explicitly labelled demo endpoint.
+                try:
+                    demo = Predictor.from_champion(settings.model_dir)
+                    metadata = demo.bundle.metadata
+                    if (metadata.get("data_source") == "synthetic"
+                            and metadata.get("scope", "combined") == "combined"):
+                        app.state.api.set_demo_predictor(demo)
+                        log.info("synthetic demonstration model loaded",
+                                 extra={"version": demo.version})
+                    else:
+                        log.warning("root model rejected for demo: unexpected provenance or scope")
+                except PredictiveOpsError as exc:
+                    log.warning("synthetic demonstration model unavailable",
+                                extra={"reason": str(exc)})
+
+            elif app.state.api.predictor is None:
+                try:
+                    app.state.api.set_predictor(Predictor.from_champion(settings.model_dir))
+                    log.info("champion model loaded", extra={"version": app.state.api.predictor.version})
+                except PredictiveOpsError as exc:
+                    log.warning("no champion model loaded", extra={"reason": str(exc)})
+
+        pollers: list[PrometheusPoller] = []
+        if settings.prometheus_enabled:
+            if settings.env == "production":
+                host_client = PrometheusClient(
+                    settings.prometheus_url, queries=HOST_QUERIES,
+                    required_metrics=HOST_METRIC_COLUMNS)
+                host_poller = PrometheusPoller(
+                    app.state.api, host_client, [settings.prometheus_host_series_id],
+                    step_seconds=settings.prometheus_step_seconds,
+                    interval_seconds=settings.prometheus_poll_seconds,
+                    lookback_steps=settings.prometheus_lookback_steps,
+                    scope="host")
+                pollers.append(host_poller)
+                if settings.prometheus_application_service_list:
+                    app_client = PrometheusClient(
+                        settings.prometheus_url, queries=APPLICATION_QUERIES,
+                        required_metrics=APPLICATION_METRIC_COLUMNS)
+                    pollers.append(PrometheusPoller(
+                        app.state.api, app_client, settings.prometheus_application_service_list,
+                        step_seconds=settings.prometheus_step_seconds,
+                        interval_seconds=settings.prometheus_poll_seconds,
+                        lookback_steps=settings.prometheus_lookback_steps,
+                        scope="application"))
+            elif settings.prometheus_service_list:
+                client = prometheus_client or PrometheusClient(settings.prometheus_url)
+                pollers.append(PrometheusPoller(
+                    app.state.api, client, settings.prometheus_service_list,
+                    step_seconds=settings.prometheus_step_seconds,
+                    interval_seconds=settings.prometheus_poll_seconds,
+                    lookback_steps=settings.prometheus_lookback_steps))
+
+            app.state.pollers = {p.scope: p for p in pollers}
+            app.state.poller = pollers[0] if len(pollers) == 1 else None
+            for poller in pollers:
+                poller.start()
         yield
-        if poller:
+        for poller in pollers:
             poller.stop()
 
     app = FastAPI(title="PredictiveOps API", version="0.8.0", lifespan=lifespan,
-                  description="Predicts the probability of service failure within the next "
-                              "15-30 minutes. Demo data is SYNTHETIC.")
+                  description="Scope-specific host and application failure-risk inference. "
+                              "Production requires independently qualified real-data models.")
     app.state.api = ApiState(settings=settings, predictor=predictor)
     app.state.poller = None
+    app.state.pollers = {}
     register_error_handlers(app)
 
     @app.middleware("http")
@@ -73,10 +134,16 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
         return response
 
     app.include_router(system.router)
+    app.include_router(history.router)
     app.include_router(predict.router)
     app.include_router(policy.router)
-    app.include_router(canary.router)
-    app.include_router(simulate.router)
+    if settings.env != "production":
+        app.include_router(predict.development_router)
+        app.include_router(canary.router)
+
+    # Synthetic simulation is a development/demo surface, never a production API.
+    if settings.env != "production":
+        app.include_router(simulate.router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", include_in_schema=False)

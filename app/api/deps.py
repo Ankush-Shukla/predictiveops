@@ -7,19 +7,60 @@ import hmac
 from fastapi import Header, HTTPException, Request
 
 from app.api.state import ApiState
+from app.core.domain import SCOPE_METRIC_COLUMNS
 from app.core.exceptions import ModelNotReadyError
 from app.models.predictor import Predictor
+
+
+def production_model_block_reason(state: ApiState, predictor: Predictor | None = None,
+                                  expected_scope: str | None = None) -> str | None:
+    """Reject demo-trained, mismatched-scope or ungated models in production."""
+    predictor = predictor or state.predictor
+    if predictor is None:
+        return "no champion model loaded"
+    if state.settings.env != "production":
+        return None
+    metadata = predictor.bundle.metadata
+    if expected_scope is not None:
+        if metadata.get("scope") != expected_scope:
+            return f"loaded model scope does not match required {expected_scope!r} scope"
+        expected_metrics = SCOPE_METRIC_COLUMNS.get(expected_scope)
+        if expected_metrics is None or tuple(predictor.metric_columns) != expected_metrics:
+            return f"model feature schema does not match required {expected_scope!r} scope"
+    source = str(metadata.get("data_source", "unknown")).lower().split("+")
+    if "synthetic" in source or "unknown" in source:
+        return "model was not trained exclusively on identified production data"
+    gates = (metadata.get("evaluation") or {}).get("gates")
+    if not isinstance(gates, dict) or gates.get("passed") is not True:
+        return "model has no passing production quality-gate report"
+    return None
 
 
 def get_state(request: Request) -> ApiState:
     return request.app.state.api
 
 
+def get_demo_predictor(request: Request) -> Predictor:
+    state = request.app.state.api
+    if state.settings.env == "production":
+        p = state.demo_predictor
+        if p is None:
+            raise ModelNotReadyError("synthetic demonstration model is unavailable")
+        metadata = p.bundle.metadata
+        if metadata.get("data_source") != "synthetic":
+            raise ModelNotReadyError("demo endpoint requires a synthetic model")
+        if metadata.get("scope", "combined") != "combined":
+            raise ModelNotReadyError("demo endpoint requires the combined-scope model")
+        return p
+    return get_predictor(request)
+
+
 def get_predictor(request: Request) -> Predictor:
-    p = request.app.state.api.predictor
-    if p is None:
-        raise ModelNotReadyError("no champion model loaded; train and promote one first "
-                                 "(python scripts/train.py --promote)")
+    state = request.app.state.api
+    p = state.predictor
+    reason = production_model_block_reason(state)
+    if p is None or reason is not None:
+        raise ModelNotReadyError(reason or "model is not ready")
     return p
 
 

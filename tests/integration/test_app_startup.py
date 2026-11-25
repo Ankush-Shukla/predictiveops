@@ -1,3 +1,4 @@
+import copy
 import time
 
 import pytest
@@ -6,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.api.main import app_factory, create_app
 from app.core.config import Settings
 from app.core.exceptions import PredictiveOpsError
+from app.models.predictor import Predictor
 from app.policies import actions
 from app.policies.actions import LazyDockerExecutor
 from data.synthetic.generator import GeneratorConfig, generate_dataset
@@ -19,8 +21,14 @@ from training.train import TrainConfig, run_training
 def model_dir(tmp_path_factory):
     root = tmp_path_factory.mktemp("models")
     df = generate_dataset(GeneratorConfig(days=8, n_series=3, seed=21))
-    run_training(df, TrainConfig(model_type="logreg", model_root=root, use_mlflow=False, promote=True,
-                                 max_fpr_for_threshold=0.2, gates=GateConfig(min_f1=0.0)))
+    run_training(
+        df,
+        TrainConfig(
+            model_type="logreg", model_root=root, use_mlflow=False, promote=True,
+            max_fpr_for_threshold=0.2,
+            gates=GateConfig(min_f1=0.0, must_beat_baseline_pr_auc=False),
+        ),
+    )
     return root
 
 
@@ -37,6 +45,50 @@ def test_startup_without_model_stays_alive_but_not_ready(tmp_path):
     with TestClient(create_app(s)) as c:
         assert c.get("/health").status_code == 200 and c.get("/ready").status_code == 503
         assert c.get("/").status_code == 200  # dashboard still served
+
+
+def test_production_readiness_requires_both_scope_models(model_dir, tmp_path):
+    base = Predictor.from_champion(model_dir)
+    host_result = run_training(
+        generate_dataset(GeneratorConfig(days=8, n_series=3, seed=22)),
+        TrainConfig(
+            model_type="logreg", scope="host", use_mlflow=False, max_fpr_for_threshold=0.2,
+            gates=GateConfig(min_f1=0.0, max_fpr=1.0, must_beat_baseline_pr_auc=False),
+        ),
+    )
+    host = Predictor(host_result.bundle, host_result.version)
+
+    def production_metadata(predictor, scope):
+        p = copy.copy(predictor)
+        p.bundle = copy.copy(predictor.bundle)
+        p.bundle.metadata = dict(predictor.bundle.metadata)
+        p.bundle.metadata.update({
+            "scope": scope,
+            "data_source": "production",
+            "evaluation": {**(p.bundle.metadata.get("evaluation") or {}),
+                           "gates": {"passed": True}},
+        })
+        return p
+
+    settings = Settings(_env_file=None, env="production", log_level="ERROR",
+                        sqlite_path=tmp_path / "production.sqlite")
+    app = create_app(settings, None, load_model=False)
+    with TestClient(app) as client:
+        production_paths = app.openapi()["paths"]
+        assert "/v1/simulate" not in production_paths
+        assert "/v1/canary/evaluate" not in production_paths
+        assert "/v1/predict" not in production_paths
+        assert "/v1/metrics/ingest" not in production_paths
+        assert "/v1/series" in production_paths
+        blocked = client.get("/ready")
+        assert blocked.status_code == 503 and blocked.json()["scope"] == "host"
+        app.state.api.set_scope_predictors({
+            "host": production_metadata(host, "host"),
+            "application": production_metadata(base, "application"),
+        })
+        assert client.get("/ready").status_code == 200
+        models = client.get("/v1/model").json()["models"]
+        assert set(models) == {"host", "application"}
 
 
 def test_unexpected_domain_error_becomes_clean_500(tmp_path):

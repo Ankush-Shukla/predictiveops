@@ -11,3 +11,10 @@ mlruns/
 artifacts/
 *.sqlite
 *.db
+
+# Production training data contains operational telemetry and incident labels.
+training-data/*
+!training-data/.gitkeep
+
+# Server-specific Prometheus configuration.
+prometheus/prometheus.server.yml

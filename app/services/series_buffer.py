@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 
@@ -18,6 +18,7 @@ class IngestOutcome:
     accepted: int = 0
     rejected: int = 0
     gap_resets: int = 0
+    accepted_rows: list[dict] = field(default_factory=list)
 
 
 class SeriesBuffer:
@@ -49,6 +50,7 @@ class SeriesBuffer:
                     out.gap_resets += 1
             row = {"timestamp": ts, **{c: getattr(p, c) for c in METRIC_COLUMNS}}
             self._rows.append(row)
+            out.accepted_rows.append(row)
             out.accepted += 1
         return out
 

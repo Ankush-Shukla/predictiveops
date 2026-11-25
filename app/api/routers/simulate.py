@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 from fastapi import APIRouter, Depends
 
-from app.api.deps import get_predictor, get_state
+from app.api.deps import get_demo_predictor, get_state
 from app.api.schemas import PolicyReplaySummary, SimulateRequest, SimulateResponse, SimulateSummary
 from app.api.state import ApiState
 from app.core.domain import METRIC_COLUMNS
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/v1", tags=["demo"])
 
 
 @router.post("/simulate", response_model=SimulateResponse)
-def simulate(req: SimulateRequest, p: Predictor = Depends(get_predictor),
+def simulate(req: SimulateRequest, p: Predictor = Depends(get_demo_predictor),
              state: ApiState = Depends(get_state)) -> SimulateResponse:
     """DEMO: generate a SYNTHETIC scenario and score every minute with the champion model.
 

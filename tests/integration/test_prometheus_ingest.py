@@ -10,10 +10,16 @@ from app.api.main import create_app
 from app.api.poller import PrometheusPoller
 from app.api.state import ApiState
 from app.core.config import Settings
-from app.core.domain import METRIC_COLUMNS
+from app.core.domain import APPLICATION_METRIC_COLUMNS, HOST_METRIC_COLUMNS, METRIC_COLUMNS
 from app.models.predictor import Predictor
 from app.policies.models import RemediationTarget
-from app.services.prometheus_client import PrometheusClient, PrometheusError
+from app.services.prometheus_client import (
+    APPLICATION_QUERIES,
+    HOST_QUERIES,
+    PrometheusClient,
+    PrometheusError,
+    frame_to_points,
+)
 from data.synthetic.generator import GeneratorConfig, generate_dataset
 from training.gates import GateConfig
 from training.train import TrainConfig, run_training
@@ -69,6 +75,15 @@ def test_fetch_window_builds_aligned_complete_frame_and_sanitises_service():
     assert calls == []  # nothing reached Prometheus
 
 
+def test_fetch_window_aligns_query_range_to_stable_step_grid():
+    calls = []
+    client = client_for(healthy, calls=calls)
+    frame = client.fetch_window("home-server", end=T0 + 102.7, steps=10, step_seconds=5)
+    assert len(frame) == 10
+    assert frame["ts"].min() == T0 + 55
+    assert frame["ts"].max() == T0 + 100
+
+
 def test_rows_missing_any_metric_are_dropped():
     def partial(t, m):
         return None if (m == "cpu_pct" and t < T0 + 20) else BASE[m]
@@ -102,11 +117,48 @@ def test_empty_result_gives_empty_frame():
 
 def test_sample_clock_is_regular_and_stable_across_polls():
     c = client_for(healthy)
-    a = PrometheusClient.to_sample_clock(c.fetch_window("s", end=T0 + 100, steps=20, step_seconds=5), 5)
-    b = PrometheusClient.to_sample_clock(c.fetch_window("s", end=T0 + 125, steps=20, step_seconds=5), 5)
+    origin_sample_ts = pd.Timestamp("2026-11-24T19:00:00Z")
+
+    a = PrometheusClient.to_sample_clock(
+        c.fetch_window("s", end=T0 + 100, steps=20, step_seconds=5),
+        5,
+        origin_ts=T0,
+        origin_sample_ts=origin_sample_ts,
+    )
+    b = PrometheusClient.to_sample_clock(
+        c.fetch_window("s", end=T0 + 125, steps=20, step_seconds=5),
+        5,
+        origin_ts=T0,
+        origin_sample_ts=origin_sample_ts,
+    )
+
     assert (a["timestamp"].diff().dropna() == pd.Timedelta(minutes=1)).all()
+    assert a["timestamp"].max().year == 2026
+
     shared = set(a["timestamp"]) & set(b["timestamp"])
-    assert len(shared) == 15  # overlapping steps get identical logical timestamps
+    assert len(shared) == 15
+
+def test_scope_query_contracts_and_host_point_defaults():
+    host = PrometheusClient("http://p", queries=HOST_QUERIES, required_metrics=HOST_METRIC_COLUMNS)
+    app = PrometheusClient("http://p", queries=APPLICATION_QUERIES,
+                           required_metrics=APPLICATION_METRIC_COLUMNS)
+    assert set(host.metrics) == set(HOST_METRIC_COLUMNS)
+    assert set(app.metrics) == set(APPLICATION_METRIC_COLUMNS)
+    assert 'or vector(0)' in APPLICATION_QUERIES["error_rate"]
+    assert 'tailscale.*' in HOST_QUERIES["network_rx_mbps"]
+    assert 'tailscale.*' in HOST_QUERIES["network_tx_mbps"]
+    with pytest.raises(ValueError, match="required metrics"):
+        PrometheusClient("http://p", queries=HOST_QUERIES)
+
+    frame = pd.DataFrame([{
+        "timestamp": pd.Timestamp("2026-11-24T00:00:00Z"),
+        **{metric: 1.0 for metric in HOST_METRIC_COLUMNS},
+    }])
+    point = frame_to_points(frame)[0]
+    assert point["cpu_pct"] == 1.0
+    assert point["request_rate_rps"] == 0.0
+    assert point["latency_p95_ms"] == 0.0
+    assert point["error_rate"] == 0.0
 
 
 def test_custom_queries_must_cover_all_metrics():
@@ -162,6 +214,18 @@ def test_poller_ingests_without_duplicates_and_scores(predictor, tmp_path):
     assert pl.status["demo-app"]["samples_ingested"] == 65
 
 
+def test_production_poller_refuses_synthetic_model(predictor, tmp_path):
+    st = make_state(predictor, tmp_path, env="production")
+    now = [T0 + 59 * 5]
+    pl = poller_for(st, healthy, now)
+    pl.poll_once()
+    assert pl.status["demo-app"]["error"] is None
+    assert "not trained exclusively" in pl.status["demo-app"]["inference_error"]
+    assert pl.status["demo-app"]["samples_ingested"] == 60
+    assert len(st.buffers["demo-app"]) == 60
+    assert st.latest == {}
+
+
 def test_poller_drives_alerts_and_dry_run_remediation(predictor, tmp_path):
     targets = {"demo-app": RemediationTarget(container="demo", action="restart_container")}
     st = make_state(predictor, tmp_path, remediation_enabled=True, remediation_targets=targets)
@@ -198,7 +262,10 @@ def test_poller_survives_failures_and_gaps(predictor, tmp_path):
     nomodel = make_state(None, tmp_path / "x")
     p2 = poller_for(nomodel, healthy, now)
     p2.poll_once()
-    assert "no champion model" in p2.status["demo-app"]["error"]
+    assert p2.status["demo-app"]["error"] is None
+    assert "no champion model" in p2.status["demo-app"]["inference_error"]
+    assert p2.status["demo-app"]["samples_ingested"] == 60
+    assert len(nomodel.buffers["demo-app"]) == 60
 
 
 def test_app_lifecycle_runs_poller_and_exposes_sources(predictor, tmp_path):

@@ -30,17 +30,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Compose file is valid (placeholder, non-secret value for the required variable)
-        run: GRAFANA_ADMIN_PASSWORD=ci-placeholder docker compose config --quiet
+        run: TAILSCALE_IP=127.0.0.1 GRAFANA_ADMIN_PASSWORD=ci-placeholder docker compose config --quiet
       - name: Prometheus config and rules are valid
         run: |
           docker run --rm --entrypoint promtool -v "$PWD/prometheus:/p:ro" -v "$PWD/monitoring:/m:ro" \
             prom/prometheus:v3.5.0 check rules /m/alert_rules.yml
           docker run --rm --entrypoint sh -v "$PWD/prometheus:/p:ro" -v "$PWD/monitoring:/m:ro" \
-            prom/prometheus:v3.5.0 -c "cp /p/prometheus.yml /tmp/prometheus.yml && mkdir -p /etc/prometheus && cp /m/alert_rules.yml /etc/prometheus/ && promtool check config /tmp/prometheus.yml"
+            prom/prometheus:v3.5.0 -c "sed 's/[$]{TAILSCALE_IP}/127.0.0.1/g' /p/prometheus.yml > /tmp/prometheus.yml && mkdir -p /etc/prometheus && cp /m/alert_rules.yml /etc/prometheus/ && promtool check config /tmp/prometheus.yml"
       - name: Images build
         run: |
           docker build -f docker/Dockerfile --target runtime -t predictiveops-runtime:ci .
           docker build -f docker/Dockerfile --target trainer -t predictiveops-trainer:ci .
+          docker build -f frontend/Dockerfile -t predictiveops-frontend:ci frontend/
       - name: Dockerfile lint
         uses: hadolint/hadolint-action@v3.1.0
         with:

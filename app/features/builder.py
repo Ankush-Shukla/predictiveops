@@ -32,6 +32,7 @@ class FeatureConfig:
     lags: tuple[int, ...] = (1, 5, 15)
     roc_lags: tuple[int, ...] = (5, 15)
     slope_window: int = 30
+    metrics: tuple[str, ...] = METRIC_COLUMNS
 
     @property
     def required_history(self) -> int:
@@ -50,7 +51,7 @@ class FeatureSchema(BaseModel):
 
 def _names(cfg: FeatureConfig) -> list[str]:
     out: list[str] = []
-    for m in METRIC_COLUMNS:
+    for m in cfg.metrics:
         out.append(f"{m}__raw")
         out += [f"{m}__lag_{k}" for k in cfg.lags]
         out += [f"{m}__roc_{k}" for k in cfg.roc_lags]
@@ -74,21 +75,33 @@ def _slope(x: np.ndarray, w: int) -> np.ndarray:
 class FeatureBuilder:
     def __init__(self, config: FeatureConfig | None = None) -> None:
         self.config = config or FeatureConfig()
+        if not self.config.metrics or len(set(self.config.metrics)) != len(self.config.metrics):
+            raise ValueError("feature metrics must be a non-empty unique sequence")
+        unknown = set(self.config.metrics) - set(METRIC_COLUMNS)
+        if unknown:
+            raise ValueError(f"unknown feature metrics: {sorted(unknown)}")
         self.feature_names: list[str] = _names(self.config)
 
     @property
     def schema(self) -> FeatureSchema:
         cfg = asdict(self.config)
-        payload = json.dumps({"v": FEATURE_VERSION, "names": self.feature_names, "cfg": cfg},
+        # Preserve the v1 hash for existing combined-model bundles; scoped schemas are v2.
+        version = FEATURE_VERSION
+        hash_cfg = dict(cfg)
+        if tuple(self.config.metrics) == METRIC_COLUMNS:
+            hash_cfg.pop("metrics")
+        else:
+            version = "2"
+        payload = json.dumps({"v": version, "names": self.feature_names, "cfg": hash_cfg},
                              sort_keys=True, default=list)
-        return FeatureSchema(version=FEATURE_VERSION, names=self.feature_names, config=cfg,
+        return FeatureSchema(version=version, names=self.feature_names, config=cfg,
                              schema_hash=hashlib.sha256(payload.encode()).hexdigest())
 
     # ---- internals ----
     def _one_series(self, g: pd.DataFrame) -> pd.DataFrame:
         cfg = self.config
         cols: dict[str, np.ndarray | pd.Series] = {}
-        for m in METRIC_COLUMNS:
+        for m in self.config.metrics:
             s = g[m].astype(float).reset_index(drop=True)
             cols[f"{m}__raw"] = s
             for k in cfg.lags:
@@ -106,9 +119,8 @@ class FeatureBuilder:
         out.index = g.index
         return out
 
-    @staticmethod
-    def _check(df: pd.DataFrame) -> None:
-        missing = [c for c in ("timestamp", *METRIC_COLUMNS) if c not in df.columns]
+    def _check(self, df: pd.DataFrame) -> None:
+        missing = [c for c in ("timestamp", *self.config.metrics) if c not in df.columns]
         if missing:
             raise DataValidationError(f"missing columns: {missing}")
         d = df["timestamp"].diff().dropna()

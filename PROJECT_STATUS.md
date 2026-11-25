@@ -1,9 +1,18 @@
 # PROJECT_STATUS
 
-_Last updated: 2026-11-23 (Phase 10, final)_
+_Last updated: 2026-11-24 (Production hardening in progress)_
 
 ## Current phase
-**All ten phases are complete.** The only remaining item is outside the author's reach: running `docker compose up` on a machine with Docker and reporting what fails (see the verification matrix). No other known blockers.
+**The original prototype phases are complete; production hardening is now in progress.** The prototype's default data source and champion model were synthetic, and the model did not consume real Node Exporter telemetry. Do not treat the existing prototype as production-ready.
+
+Current hardening work:
+- Separate host and application feature schemas and training scopes.
+- Remove demo-only Grafana panels and replace simulated alerts with host/application telemetry alerts.
+- Prevent synthetic-only or ungated models from serving production predictions.
+- Stop Compose from automatically generating and promoting synthetic models at startup.
+- Add real application exporter discovery and a documented instrumentation contract.
+
+Production release remains blocked until both scope-specific inference pipelines are wired to real telemetry, trained on reviewed incident labels, validated on held-out real events, and exercised in the target Docker environment.
 
 ## Completed
 - **Phase 1** scaffold, settings, logging, domain definitions, schemas, synthetic generator + CLI.

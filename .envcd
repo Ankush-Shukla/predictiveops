@@ -1,0 +1,14 @@
+
+se.yml docker-compose.yml.pre-30d-retention
+
+sed -i \
+  's/--storage.tsdb.retention.time=2d/--storage.tsdb.retention.time=30d/' \
+  docker-compose.yml
+
+echo "=== RETENTION CONFIGURATION ==="
+grep -n 'storage.tsdb.retention.time' docker-compose.yml
+
+echo
+echo "=== CONFIGURATION DIFF ==="
+diff -u docker-compose.yml.pre-30d-retention docker-compose.yml
+

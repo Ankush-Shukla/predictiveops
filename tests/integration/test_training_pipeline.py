@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from app.core.domain import HOST_METRIC_COLUMNS
 from app.models import registry
 from app.models.bundle import ModelBundle, ModelNotFoundError, ModelSchemaMismatchError
 from app.models.predictor import Predictor
@@ -113,6 +114,21 @@ def test_registry_errors(tmp_path):
         registry.load_champion(tmp_path)
     with pytest.raises(ModelNotFoundError):
         registry.set_champion(tmp_path, "nope")
+
+
+def test_host_scope_trains_and_predicts_without_application_fields(df, tmp_path):
+    cfg = TrainConfig(
+        model_type="logreg", scope="host", model_root=tmp_path, use_mlflow=False,
+        max_fpr_for_threshold=0.2,
+        gates=GateConfig(min_f1=0.0, max_fpr=1.0, must_beat_baseline_pr_auc=False),
+    )
+    res = run_training(df, cfg)
+    assert res.bundle.metadata["scope"] == "host"
+    assert tuple(res.bundle.schema.config["metrics"]) == HOST_METRIC_COLUMNS
+    p = Predictor(res.bundle, res.version)
+    host_window = df[df.series_id == "svc-00"].iloc[:120][["timestamp", *HOST_METRIC_COLUMNS]]
+    result = p.predict(host_window)
+    assert 0.0 <= result.probability <= 1.0
 
 
 def test_failed_gates_block_promotion(df, tmp_path):

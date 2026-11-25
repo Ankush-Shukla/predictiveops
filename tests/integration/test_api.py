@@ -48,6 +48,16 @@ def points(data, start, n, series="svc-00"):
             for r in g.itertuples()]
 
 
+def test_container_inventory_degrades_cleanly_without_prometheus():
+    app = create_app(settings(prometheus_url="http://127.0.0.1:1"), None, load_model=False)
+    with TestClient(app) as c:
+        response = c.get("/v1/containers")
+    assert response.status_code == 200
+    assert response.json()["available"] is False
+    assert response.json()["containers"] == []
+    assert response.json()["error"]
+
+
 def test_health_and_static(client):
     assert client.get("/health").json() == {"status": "ok"}
     r = client.get("/")

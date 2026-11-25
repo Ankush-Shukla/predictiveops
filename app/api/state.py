@@ -13,6 +13,7 @@ from app.policies.actions import LazyDockerExecutor, NoopExecutor
 from app.policies.audit import AuditStore
 from app.policies.engine import PolicyEngine
 from app.services.series_buffer import SeriesBuffer
+from app.services.telemetry_store import TelemetryStore
 
 
 class Collectors:
@@ -39,24 +40,30 @@ class Collectors:
                               ["decision"], registry=registry)
         self.model_info = Gauge("predictiveops_model_info", "Loaded model", ["version", "data_source"],
                                 registry=registry)
+        self.model_scope_info = Gauge("predictiveops_model_scope_info", "Qualified model scope",
+                                      ["scope", "version", "data_source"], registry=registry)
 
 
 @dataclass
 class ApiState:
     settings: Settings
     predictor: Predictor | None
+    demo_predictor: Predictor | None = None
+    scope_predictors: dict[str, Predictor] = field(default_factory=dict)
     registry: CollectorRegistry = field(default_factory=CollectorRegistry)
     buffers: dict[str, SeriesBuffer] = field(default_factory=dict)
     latest: dict[str, object] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
     collectors: Collectors = field(init=False)
     store: AuditStore = field(init=False)
+    telemetry_store: TelemetryStore = field(init=False)
     policy: PolicyEngine = field(init=False)
 
     def __post_init__(self) -> None:
         self.collectors = Collectors(self.registry)
         cfg = self.settings.policy_config()
         self.store = AuditStore(self.settings.sqlite_path)
+        self.telemetry_store = TelemetryStore(self.settings.sqlite_path)
         live = cfg.remediation_enabled and not cfg.dry_run
         self.policy = PolicyEngine(cfg, self.store, LazyDockerExecutor() if live else NoopExecutor())
         self.set_predictor(self.predictor)
@@ -64,6 +71,22 @@ class ApiState:
     def set_predictor(self, predictor: Predictor | None) -> None:
         self.predictor = predictor
         if predictor is not None:
-            self.collectors.model_info.labels(
-                version=predictor.version,
-                data_source=str(predictor.bundle.metadata.get("data_source", "unknown"))).set(1)
+            scope = str(predictor.bundle.metadata.get("scope", "combined"))
+            self.scope_predictors[scope] = predictor
+            data_source = str(predictor.bundle.metadata.get("data_source", "unknown"))
+            self.collectors.model_info.labels(version=predictor.version, data_source=data_source).set(1)
+            self.collectors.model_scope_info.labels(
+                scope=scope, version=predictor.version, data_source=data_source).set(1)
+
+    def set_demo_predictor(self, predictor: Predictor | None) -> None:
+        # Demonstration-only model. Never register it as a production scope model.
+        self.demo_predictor = predictor
+
+    def set_scope_predictors(self, predictors: dict[str, Predictor]) -> None:
+        self.scope_predictors = dict(predictors)
+        for predictor in self.scope_predictors.values():
+            scope = str(predictor.bundle.metadata.get("scope", "unknown"))
+            data_source = str(predictor.bundle.metadata.get("data_source", "unknown"))
+            self.collectors.model_info.labels(version=predictor.version, data_source=data_source).set(1)
+            self.collectors.model_scope_info.labels(
+                scope=scope, version=predictor.version, data_source=data_source).set(1)

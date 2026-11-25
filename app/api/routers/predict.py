@@ -10,9 +10,10 @@ from app.models.predictor import Predictor
 from app.models.schemas import PredictionResult, points_to_frame
 
 router = APIRouter(prefix="/v1", tags=["prediction"])
+development_router = APIRouter(prefix="/v1", tags=["prediction"])
 
 
-@router.post("/predict", response_model=PredictionResult)
+@development_router.post("/predict", response_model=PredictionResult)
 def predict(req: PredictRequest, p: Predictor = Depends(get_predictor),
             state: ApiState = Depends(get_state)) -> PredictionResult:
     """Score the latest sample of one service from a window of recent 1-minute samples."""
@@ -21,7 +22,11 @@ def predict(req: PredictRequest, p: Predictor = Depends(get_predictor),
     return result
 
 
-@router.post("/metrics/ingest", response_model=IngestResponse, dependencies=[Depends(require_api_key)])
+@development_router.post(
+    "/metrics/ingest",
+    response_model=IngestResponse,
+    dependencies=[Depends(require_api_key)],
+)
 def ingest(req: IngestRequest, p: Predictor = Depends(get_predictor),
            state: ApiState = Depends(get_state)) -> IngestResponse:
     """Append samples to a series buffer, score every new minute and run the alert policy."""

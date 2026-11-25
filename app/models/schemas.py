@@ -36,15 +36,16 @@ def points_to_frame(points: list[MetricPoint]) -> pd.DataFrame:
     return df.sort_values("timestamp").reset_index(drop=True)
 
 
-def validate_metrics_frame(df: pd.DataFrame, *, require_series_id: bool = True) -> None:
+def validate_metrics_frame(df: pd.DataFrame, *, require_series_id: bool = True,
+                           metrics: tuple[str, ...] = METRIC_COLUMNS) -> None:
     """Raise DataValidationError if the frame is missing columns, has NaNs or out-of-range values."""
-    required = list(METRIC_COLUMNS) + ["timestamp"] + (["series_id"] if require_series_id else [])
+    required = list(metrics) + ["timestamp"] + (["series_id"] if require_series_id else [])
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise DataValidationError(f"missing columns: {missing}")
     if df.empty:
         raise DataValidationError("metrics frame is empty")
-    for col in METRIC_COLUMNS:
+    for col in metrics:
         s = df[col]
         if s.isna().any():
             raise DataValidationError(f"column {col!r} contains NaN")
