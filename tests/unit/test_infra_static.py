@@ -97,7 +97,7 @@ def test_prometheus_scrapes_host_and_discovered_application_targets():
     assert jobs["applications"]["file_sd_configs"][0]["files"] == ["/etc/prometheus/targets/*.yml"]
     assert "./prometheus/targets:/etc/prometheus/targets:ro" in SVC["prometheus"]["volumes"]
     rules = load("monitoring/alert_rules.yml")["groups"][0]["rules"]
-    assert {r["alert"] for r in rules} >= {"PredictedFailure", "PolicyAlertLevel"}
+    assert {r["alert"] for r in rules} >= {"PredictedFailure", "PolicyAlertLevel", "PredictiveOpsStressCapacityReached"}
 
 def test_grafana_provisioning_consistent():
     ds = load("grafana/provisioning/datasources/prometheus.yml")["datasources"][0]

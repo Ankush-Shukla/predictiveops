@@ -38,6 +38,13 @@ class Collectors:
                                "Remediation decisions by outcome", ["outcome"], registry=registry)
         self.canary = Counter("predictiveops_canary_evaluations_total", "Canary evaluations",
                               ["decision"], registry=registry)
+        self.stress_runs = Counter("predictiveops_stress_runs_total", "Stress tests started",
+                                  registry=registry)
+        self.stress_failures = Counter(
+            "predictiveops_stress_worker_failures_total",
+            "Stress-test workers that terminated before the test deadline",
+            registry=registry,
+        )
         self.model_info = Gauge("predictiveops_model_info", "Loaded model", ["version", "data_source"],
                                 registry=registry)
         self.model_scope_info = Gauge("predictiveops_model_scope_info", "Qualified model scope",

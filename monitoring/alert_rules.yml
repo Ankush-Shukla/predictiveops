@@ -39,6 +39,14 @@ groups:
         annotations:
           summary: "Application p95 latency above 500ms for {{ $labels.service }}"
 
+      - alert: PredictiveOpsStressCapacityReached
+        expr: increase(predictiveops_stress_worker_failures_total[5m]) > 0
+        for: 0m
+        labels: { severity: critical, scope: stress-test }
+        annotations:
+          summary: "Stress test reached a worker capacity boundary"
+          description: "A temporary worker exited before the configured test deadline. Inspect the stress run and audit trail for exit code, OOM state and worker details."
+
   - name: host-safety-net
     rules:
       - alert: HostCpuWarning
