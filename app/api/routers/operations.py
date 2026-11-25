@@ -21,7 +21,7 @@ router = APIRouter(prefix="/v1/ops", tags=["container-operations"])
 log = logging.getLogger("predictiveops.operations")
 PROJECT = "predictiveops"
 STRESS_IMAGE = "python:3.12-alpine"
-STRESS_CODE = "import time\nblocks=[]\nwhile True:\n blocks.append(bytearray(1024*1024))\n time.sleep(.25)"
+STRESS_CODE = "import time\nblocks=[]\nsize=0\nwhile True:\n blocks.append(bytearray(1024*1024))\n size+=1\n if size % 4 == 0: print(f\u0027allocated_mib={size}\u0027, flush=True)\n time.sleep(.25)"
 WATCHERS: dict[str, tuple[threading.Event, threading.Thread]] = {}
 
 
@@ -121,9 +121,17 @@ def _capture_incident(
         except (DockerException, OSError) as exc:
             logs = f"Container logs could not be read after exit: {exc}"
         if not logs:
+            state_summary = {
+                "status": state.get("Status"), "exit_code": exit_code,
+                "oom_killed": oom_killed, "error": error,
+                "memory_limit_bytes": container.attrs.get("HostConfig", {}).get("Memory"),
+                "restart_count": container.attrs.get("RestartCount", 0),
+            }
             logs = (
-                "Docker retained no stdout/stderr lines for this incident. Use exit code, "
-                "OOM state, Docker error and container metadata below for diagnosis."
+                "No application output was retained by Docker. This can happen when the "
+                "kernel OOM-kills a process before stdout/stderr is flushed.\n"
+                "Reconstructed termination context:\n"
+                + json.dumps(state_summary, indent=2)
             )
 
         if oom_killed or exit_code == 137:
@@ -213,6 +221,32 @@ def stop_event_watcher(path: Path) -> None:
         watcher[0].set()
 
 
+def cleanup_orphaned_stress_containers() -> int:
+    """Remove temporary workers left behind if the API was interrupted mid-test."""
+    try:
+        client = _client()
+        stale = client.containers.list(
+            all=True,
+            filters={"label": [
+                f"com.docker.compose.project={PROJECT}",
+                "predictiveops.role=stress",
+            ]},
+        )
+    except DockerException as exc:
+        log.warning("could not inspect stale stress workers: %s", exc)
+        return 0
+    removed = 0
+    for worker in stale:
+        try:
+            worker.remove(force=True)
+            removed += 1
+        except (DockerException, NotFound) as exc:
+            log.warning("could not remove stale stress worker %s: %s", worker.short_id, exc)
+    if removed:
+        log.info("removed orphaned stress workers", extra={"count": removed})
+    return removed
+
+
 class StressRequest(BaseModel):
     max_users: int = Field(default=10, ge=1, le=10)
     duration_seconds: int = Field(default=30, ge=5, le=60)
@@ -235,6 +269,8 @@ def managed_containers():
         client = _client()
         items = []
         for c in client.containers.list(all=True, filters={"label": f"com.docker.compose.project={PROJECT}"}):
+            if c.labels.get("predictiveops.role") == "stress":
+                continue
             c.reload()
             st = c.attrs.get("State", {})
             service = c.labels.get("com.docker.compose.service", "—")
@@ -308,31 +344,42 @@ def start_stress(request: StressRequest, state: ApiState = Depends(get_state)):
         db.execute("INSERT INTO stress_runs(id,status,max_users,started_at) VALUES(?,?,?,?)",
                    (run_id, "running", request.max_users, started))
     thread = threading.Thread(
-        target=_run_stress, args=(path, run_id, request.max_users, request.duration_seconds),
+        target=_run_stress,
+        args=(path, run_id, request.max_users, request.duration_seconds,
+              state.store, state.collectors),
         name=f"stress-{run_id}", daemon=True)
     thread.start()
     return {"run_id": run_id, "status": "running", "max_users": request.max_users,
             "duration_seconds": request.duration_seconds}
 
 
-def _run_stress(path: Path, run_id: str, max_users: int, duration: int):
-    client = None
+def _run_stress(path: Path, run_id: str, max_users: int, duration: int,
+                audit, collectors):
     workers = []
     failure = None
-    started = time.monotonic()
+    started_clock = time.monotonic()
+    started_at = datetime.now(UTC)
     status = "completed"
+    series_id = f"stress:{run_id}"
+    audit.add_audit(
+        ts=started_at, series_id=series_id, action="stress_test_started",
+        target=None, outcome="started", dry_run=True, probability=None,
+        model_version=None, reason="Temporary resource-capped workers started",
+        details={"max_users": max_users, "duration_seconds": duration},
+    )
+    collectors.stress_runs.inc()
     try:
         client = _client()
         client.images.pull(STRESS_IMAGE)
         for index in range(1, max_users + 1):
-            if time.monotonic() - started >= duration:
-                status = "timed_out"
+            if time.monotonic() - started_clock >= duration:
                 break
             worker = client.containers.run(
-                STRESS_IMAGE, ["python", "-c", STRESS_CODE], detach=True,
+                STRESS_IMAGE, ["python", "-u", "-c", STRESS_CODE], detach=True,
                 name=f"predictiveops-stress-{run_id}-{index}",
                 mem_limit="32m", nano_cpus=100_000_000, pids_limit=8,
-                network_disabled=True, read_only=True, tmpfs={"/tmp": "rw,noexec,nosuid,size=1m"},
+                network_disabled=True, read_only=True,
+                tmpfs={"/tmp": "rw,noexec,nosuid,size=1m"},
                 labels={"com.docker.compose.project": PROJECT, "predictiveops.role": "stress",
                         "predictiveops.stress_run": run_id, "predictiveops.virtual_user": str(index)},
             )
@@ -340,43 +387,76 @@ def _run_stress(path: Path, run_id: str, max_users: int, duration: int):
             with _connect(path) as db:
                 db.execute("UPDATE stress_runs SET users_started=?,worker_ids=? WHERE id=?",
                            (len(workers), json.dumps([w.id for w in workers]), run_id))
-            deadline = time.monotonic() + 2.0
-            while time.monotonic() < deadline:
-                for active_index, active in enumerate(workers, start=1):
+
+        deadline = started_clock + duration
+        while time.monotonic() < deadline and not failure:
+            for active_index, active in enumerate(workers, start=1):
+                try:
                     active.reload()
-                    if active.status != "running":
-                        exit_code = active.attrs.get("State", {}).get("ExitCode", "unknown")
-                        failure = (
-                            f"Virtual user {active_index} exited ({active.status}, "
-                            f"exit code {exit_code})"
-                        )
-                        status = "capacity_reached"
-                        _capture_incident(path, active.id, "stress_failure")
-                        break
-                if failure:
+                except NotFound:
+                    failure = f"Virtual user {active_index} disappeared before cleanup"
+                    status = "worker_lost"
                     break
-                time.sleep(.2)
-            if failure:
-                break
-        if not failure and len(workers) == max_users:
-            status = "limit_reached"
+                if active.status != "running":
+                    state = active.attrs.get("State", {})
+                    exit_code = state.get("ExitCode", "unknown")
+                    oom = bool(state.get("OOMKilled") or exit_code == 137)
+                    failure = (
+                        f"Virtual user {active_index} terminated unexpectedly "
+                        f"(status={active.status}, exit_code={exit_code}, oom_killed={oom})"
+                    )
+                    status = "capacity_reached"
+                    _capture_incident(path, active.id, "stress_failure")
+                    collectors.stress_failures.inc()
+                    failed_at = datetime.now(UTC)
+                    audit.add_alert(
+                        ts=failed_at, series_id=series_id, level="critical",
+                        probability=1.0, threshold=0.0, model_version="stress-test",
+                        message=f"Stress-test capacity boundary: {failure}",
+                    )
+                    audit.add_audit(
+                        ts=failed_at, series_id=series_id, action="stress_worker_failed",
+                        target=active.name, outcome="capacity_reached", dry_run=True,
+                        probability=None, model_version=None, reason=failure,
+                        details={"exit_code": exit_code, "oom_killed": oom,
+                                 "worker_id": active.short_id, "users_started": len(workers)},
+                    )
+                    break
+            if not failure:
+                time.sleep(0.5)
     except Exception as exc:
-        failure = str(exc)
+        failure = f"{type(exc).__name__}: {exc}"
         status = "error"
         log.exception("stress run %s failed", run_id)
+        audit.add_audit(
+            ts=datetime.now(UTC), series_id=series_id, action="stress_test_error",
+            target=None, outcome="failed", dry_run=True, probability=None,
+            model_version=None, reason=failure,
+            details={"users_started": len(workers)},
+        )
     finally:
+        removed = 0
         for worker in workers:
             try:
                 worker.stop(timeout=1)
-            except Exception:
+            except (DockerException, NotFound):
                 pass
             try:
                 worker.remove(force=True)
-            except Exception:
-                pass
+                removed += 1
+            except (DockerException, NotFound) as exc:
+                log.warning("stress worker cleanup failed for %s: %s", worker.short_id, exc)
+        finished_at = datetime.now(UTC)
         with _connect(path) as db:
             db.execute("UPDATE stress_runs SET status=?,failure=?,finished_at=? WHERE id=?",
-                       (status, failure, datetime.now(UTC).isoformat(), run_id))
+                       (status, failure, finished_at.isoformat(), run_id))
+        audit.add_audit(
+            ts=finished_at, series_id=series_id, action="stress_test_finished",
+            target=None, outcome=status, dry_run=True, probability=None,
+            model_version=None, reason=failure or "Stress test completed",
+            details={"users_started": len(workers), "workers_removed": removed,
+                     "duration_seconds": round(time.monotonic() - started_clock, 2)},
+        )
 
 
 @router.get("/stress/{run_id}")
