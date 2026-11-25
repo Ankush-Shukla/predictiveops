@@ -8,9 +8,9 @@ tightly constrained remediation, gates model promotion in CI, and judges canary 
 with the same model.
 
 > **Production safety:** synthetic data is for development and CI only. Production inference rejects synthetic-only
-> models and models without passing evaluation gates. These controls are **not** evidence of production accuracy; only evaluation on reviewed real incidents can establish that. A production deployment requires two separately trained
-> models and reviewed incident labels: one for host metrics and one for application metrics. Until both are
-> available, `/ready` returns HTTP 503 and the dashboard reports the exact blocker. See
+> models and models without passing evaluation gates. These controls are **not** evidence of production accuracy; only evaluation on reviewed real incidents can establish that. A production deployment requires a separately trained host model and, when application targets are configured,
+> a separately trained application model, each backed by reviewed real incident labels. Until every configured
+> scope is available and passes its gates, `/ready` returns HTTP 503 and the dashboard reports the exact blocker. See
 > [the production telemetry contract](docs/production-telemetry.md).
 
 ## How it fits together
@@ -146,6 +146,7 @@ live remediation until its target allowlist and action path have been reviewed.
 | `GET /v1/model` | Model metadata; production returns separate host and application models |
 | `GET /v1/sources` | Prometheus source and per-scope poller status |
 | `GET /v1/live-forecast` | Live 15/30-minute host resource guardrail forecast from Node Exporter telemetry |
+| `GET /v1/experimental/host/prediction` | Read-only synthetic-trained HGB score over live host telemetry; experimental and not production-qualified |
 | `GET /v1/series[/{id}]` | Buffered time series and latest prediction state |
 | `GET /v1/alerts`, `GET /v1/audit`, `GET /v1/policy` | Alert history, audit log and policy state |
 | `GET /metrics` | PredictiveOps Prometheus instrumentation |
@@ -153,9 +154,33 @@ live remediation until its target allowlist and action path have been reviewed.
 | `POST /v1/simulate`, canary routes | Development-only; not registered when `ENV=production` |
 
 The production API polls host metrics and configured application targets independently. A series
-needs at least the model's required contiguous one-minute history before the first prediction.
+needs at least the model's required contiguous one-minute history before the first supervised prediction.
 Missing exporters, missing metrics, stale samples and unqualified models are reported as source or
 readiness failures; they are never converted into a healthy zero-valued prediction.
+
+### Experimental ML score on live host telemetry
+
+For a live ML demonstration without pretending synthetic labels are real incidents, train an isolated
+host-scope model from host-only synthetic CPU, memory and disk fault scenarios, then score the actual
+Node Exporter metrics buffered by Prometheus. The model lives under
+`artifacts/models/experimental-host`; it never replaces the production host or application champion.
+
+```bash
+docker compose build trainer api frontend
+docker compose run --rm --no-deps trainer python scripts/train_experimental_host.py
+docker compose up -d --no-deps api frontend
+```
+
+The script evaluates the model on a chronological held-out synthetic test segment and reports its gates.
+It installs the artifact only in the isolated experimental directory, even if a gate fails; the gate result
+remains visible in the dashboard. The experimental endpoint requires 30 contiguous one-minute live host
+samples and has no alert-policy or remediation side effects.
+
+**Interpretation:** this is synthetic training applied to real host inputs. Its probability is not evidence
+of real-world calibration or production failure accuracy. The separate live resource forecast panel uses
+a robust Theil-Sen trend estimator to project CPU, memory and disk guardrail crossings; that is a capacity
+forecast, not a failure probability. Both are observational signals. Production ML qualification still
+requires representative labelled real incidents and independent validation.
 
 ## Alert policy and safe remediation
 
@@ -241,8 +266,8 @@ application instrumentation still require an end-to-end run on the target server
 ## Known limitations and release blockers
 
 - Real, reviewed, labelled host and application datasets have not yet been supplied. Production
-  readiness deliberately remains HTTP 503 until both models are trained from non-synthetic data
-  and pass their evaluation gates.
+  readiness deliberately remains HTTP 503 until the host model and every configured application model are trained
+  from non-synthetic data and pass their evaluation gates.
 - Each application must expose the documented request counter and latency histogram, and its
   container must carry the `predictiveops.service` label. Uninstrumented applications are not
   eligible for application-level inference.

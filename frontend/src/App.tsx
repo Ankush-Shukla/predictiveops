@@ -12,12 +12,12 @@ import {
 type AnyRecord = Record<string, any>;
 type Snapshot = {
   health: AnyRecord | null; ready: AnyRecord | null; model: AnyRecord | null;
-  liveForecast: AnyRecord | null;
+  liveForecast: AnyRecord | null; experimentalPrediction: AnyRecord | null;
   sources: AnyRecord | null; series: AnyRecord[]; containers: AnyRecord[]; containerStatus: AnyRecord | null; alerts: AnyRecord[];
   audit: AnyRecord[]; policy: AnyRecord | null;
   errors: string[];
 };
-const empty: Snapshot = { health:null, ready:null, model:null, liveForecast:null, sources:null, series:[], containers:[], containerStatus:null, alerts:[], audit:[], policy:null, errors:[] };
+const empty: Snapshot = { health:null, ready:null, model:null, liveForecast:null, experimentalPrediction:null, sources:null, series:[], containers:[], containerStatus:null, alerts:[], audit:[], policy:null, errors:[] };
 const get = async (path: string) => {
   const response = await fetch(path, { headers: { Accept: "application/json" } });
   if (!response.ok) {
@@ -87,7 +87,7 @@ function App() {
     setRefreshing(true);
     const endpoints = [
       ["health", "/health"], ["ready", "/ready"], ["model", "/v1/model"],
-      ["liveForecast", "/v1/live-forecast"], ["sources", "/v1/sources"], ["series", "/v1/series"], ["containerStatus", "/v1/containers"], ["alerts", "/v1/alerts?limit=50"],
+      ["liveForecast", "/v1/live-forecast"], ["experimentalPrediction", "/v1/experimental/host/prediction"], ["sources", "/v1/sources"], ["series", "/v1/series"], ["containerStatus", "/v1/containers"], ["alerts", "/v1/alerts?limit=50"],
       ["audit", "/v1/audit?limit=50"], ["policy", "/v1/policy"],
     ] as const;
     const results = await Promise.all(endpoints.map(async ([key, path]) => {
@@ -217,6 +217,7 @@ function App() {
               <StatCard icon={<Bell/>} label="RECENT ALERTS" value={String(alertCount)} detail="Latest 50 records" tone={alertCount ? "amber" : "green"}/>
               <StatCard icon={<Zap/>} label="PROMETHEUS" value={sourceHealth} detail={sourceDetail} tone={sourceHealth === "Healthy" ? "green" : "amber"}/>
             </section>
+            <ExperimentalHostPanel data={data.experimentalPrediction}/>
             <LiveForecastPanel forecast={data.liveForecast}/>
             <section className="content-grid">
               <div className="panel risk-panel">
@@ -280,6 +281,7 @@ function App() {
           </>}
 
           {page === "Predictions" && <>
+            <ExperimentalHostPanel data={data.experimentalPrediction}/>
             <LiveForecastPanel forecast={data.liveForecast}/>
             <section className="panel full-panel">
               <PanelTitle
@@ -480,6 +482,68 @@ function LiveForecastPanel({ forecast }: { forecast: AnyRecord | null }) {
   );
 }
 
+function ExperimentalHostPanel({data}:{data:AnyRecord | null}) {
+  const scored = data?.status === "scored";
+  const history = scored && Array.isArray(data.history)
+    ? data.history.map((point:AnyRecord, minute:number) => ({minute, probability:point.probability, threshold:data.threshold}))
+    : [];
+  const metrics = data?.metrics ?? {};
+  return (
+    <section className="panel full-panel">
+      <PanelTitle title="Experimental ML host-risk score" subtitle="Synthetic-trained HGB model applied to the live Node Exporter host series"/>
+      <div className="notice warning">
+        <ShieldAlert size={16}/>
+        <div>
+          <b>EXPERIMENTAL — SYNTHETIC TRAINING, LIVE HOST INPUTS</b>
+          <span>This cross-domain score is not a production-qualified failure forecast. It is isolated from production alerts, readiness and remediation.</span>
+        </div>
+      </div>
+      {scored ? <>
+        <div className="stat-grid" style={{marginBottom:16}}>
+          <StatCard icon={<Gauge/>} label="CURRENT FAILURE RISK" value={`${(data.probability*100).toFixed(1)}%`} detail={data.predicted_failure ? "Above experimental threshold" : "Below experimental threshold"} tone={data.predicted_failure ? "amber" : "green"}/>
+          <StatCard icon={<Activity/>} label="MODEL THRESHOLD" value={`${(data.threshold*100).toFixed(1)}%`} detail="Synthetic validation threshold" tone="blue"/>
+          <StatCard icon={<Clock3/>} label="FORECAST HORIZON" value={`${data.horizon_minutes} min`} detail="Prediction window" tone="blue"/>
+          <StatCard icon={<Server/>} label="LIVE HISTORY" value={String(data.buffered_samples)} detail={`${history.length} scored one-minute points`} tone="green"/>
+        </div>
+        <div className="panel" style={{marginBottom:14}}>
+          <PanelTitle title="Live ML probability trend" subtitle="Recent predictions from real host telemetry · dashed line is the experimental threshold"/>
+          <div className="chart-wrap">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={history} margin={{top:12,right:16,left:0,bottom:8}}>
+                <CartesianGrid stroke="#202a39" vertical={false}/>
+                <XAxis dataKey="minute" tick={{fill:"#8491a4",fontSize:10}} axisLine={false} tickLine={false} label={{value:"Recent scored samples",position:"insideBottom",offset:-3,fill:"#8491a4",fontSize:10}}/>
+                <YAxis domain={[0,1]} tick={{fill:"#8491a4",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v => `${Math.round(v*100)}%`}/>
+                <Tooltip contentStyle={{background:"#111925",border:"1px solid #2a3749",borderRadius:9,color:"#e7edf6"}} labelFormatter={v => `Sample ${v}`} formatter={(value,name) => [`${(Number(value)*100).toFixed(2)}%`,name === "probability" ? "Failure probability" : "Decision threshold"]}/>
+                <Legend wrapperStyle={{fontSize:11,color:"#aab6c8"}}/>
+                <Area type="monotone" dataKey="probability" name="Failure probability" stroke="#4f8cff" fill="#4f8cff" fillOpacity={0.18} strokeWidth={2} dot={false}/>
+                <Line type="monotone" dataKey="threshold" name="Decision threshold" stroke="#e7a94b" strokeWidth={2} strokeDasharray="6 4" dot={false}/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        <div className="content-grid">
+          <div className="panel">
+            <PanelTitle title="Live host metrics" subtitle="Latest sample scored by the experimental model"/>
+            <Detail label="CPU utilization" value={typeof metrics.cpu_pct === "number" ? `${metrics.cpu_pct.toFixed(1)}%` : "—"}/>
+            <Detail label="Memory utilization" value={typeof metrics.memory_pct === "number" ? `${metrics.memory_pct.toFixed(1)}%` : "—"}/>
+            <Detail label="Disk I/O utilization" value={typeof metrics.disk_io_util_pct === "number" ? `${metrics.disk_io_util_pct.toFixed(1)}%` : "—"}/>
+            <Detail label="Network RX" value={typeof metrics.network_rx_mbps === "number" ? `${metrics.network_rx_mbps.toFixed(2)} Mbps` : "—"}/>
+            <Detail label="Network TX" value={typeof metrics.network_tx_mbps === "number" ? `${metrics.network_tx_mbps.toFixed(2)} Mbps` : "—"}/>
+          </div>
+          <div className="panel">
+            <PanelTitle title="Model provenance" subtitle="Experimental evaluation metadata"/>
+            <Detail label="Model version" value={data.model_version}/>
+            <Detail label="Training source" value={data.data_source}/>
+            <Detail label="Synthetic held-out gates" value={data.quality_gates_passed ? "Passed" : "Not passed"}/>
+            <Detail label="Required history" value={`${data.required_history_minutes} minutes`}/>
+            <Detail label="Latest scored at" value={time(data.as_of)}/>
+          </div>
+        </div>
+      </> : <EmptyState icon={<Gauge/>} title={data?.status === "model_unavailable" ? "Experimental model not installed" : "Waiting for live host history"} text={data?.status === "warming_up" ? `Buffered ${data.buffered_samples ?? 0} of ${data.required_history_minutes ?? 30} required one-minute samples.` : "Train and install the isolated experimental host model. Live Node Exporter samples will then be scored."}/>}
+      <div className="model-note"><ShieldAlert size={15}/><span>{data?.disclaimer ?? "Experimental prediction is separate from the live capacity trend forecast and production model."}</span></div>
+    </section>
+  );
+}
 function StatCard({icon,label,value,detail,tone}:{icon:ReactNode;label:string;value:string;detail:string;tone:string}) {
   return <div className="stat-card"><div className={`stat-icon ${tone}`}>{icon}</div><div className="stat-label">{label}</div><div className="stat-value">{value}</div><div className="stat-detail">{detail}</div></div>;
 }
