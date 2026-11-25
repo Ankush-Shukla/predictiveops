@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.errors import register_error_handlers
 from app.api.poller import PrometheusPoller
-from app.api.routers import canary, history, policy, predict, simulate, system
+from app.api.routers import canary, history, operations, policy, predict, simulate, system
 from app.api.state import ApiState
 from app.core.config import Settings, get_settings
 from app.core.domain import APPLICATION_METRIC_COLUMNS, HOST_METRIC_COLUMNS
@@ -136,7 +136,9 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
             app.state.poller = pollers[0] if len(pollers) == 1 else None
             for poller in pollers:
                 poller.start()
+        operations.start_event_watcher(settings.sqlite_path.with_name('operations.sqlite3'))
         yield
+        operations.stop_event_watcher(settings.sqlite_path.with_name('operations.sqlite3'))
         for poller in pollers:
             poller.stop()
 
@@ -162,6 +164,7 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
         return response
 
     app.include_router(system.router)
+    app.include_router(operations.router)
     app.include_router(history.router)
     app.include_router(predict.router)
     app.include_router(policy.router)
