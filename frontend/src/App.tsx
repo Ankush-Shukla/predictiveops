@@ -561,7 +561,7 @@ function App() {
                   <button className="icon-button" style={{width:"auto",padding:"9px 14px"}} onClick={() => void startStressTest()}>START STRESS TEST</button>
                 </div>
                 <div className="model-note">Hard limits: 256 MiB RAM · 1 CPU core · 128 PIDs · maximum 180 seconds. The test will not deliberately exhaust the host.</div>
-                {opsContainers.filter(c=>c.stress_test).map(c=><div key={c.id} className="detail-row"><span>{c.name} · {c.status}</span>{c.status === "running" && <button className="icon-button" style={{width:"auto",padding:"5px 8px"}} onClick={()=>void stopStressTest(c.id)}>STOP TEST</button>}</div>)}
+                {opsContainers.filter(c=>c.stress_test).map(c=><div key={c.id} className="detail-row"><span>{c.name} · {c.status} · {c.simulated_users_started ?? 0} users · {c.stress_result ?? "pending"}</span>{c.status === "running" && <button className="icon-button" style={{width:"auto",padding:"5px 8px"}} onClick={()=>void stopStressTest(c.id)}>STOP TEST</button>}</div>)}
               </div>
             </section>
             <section className="container-grafana-link"><span>Historical container trends, filesystem I/O and network charts</span><a href={"http://" + window.location.hostname + ":3000/d/predictiveops/predictiveops"} target="_blank" rel="noreferrer">Open infrastructure dashboard <ExternalLink size={13}/></a></section>
