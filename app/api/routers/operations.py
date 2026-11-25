@@ -65,10 +65,20 @@ def _capture_incident(path: Path, container_id: str, event: str = "die") -> None
         if not _project_container(container):
             return
         container.reload()
+        labels = container.labels
+        if labels.get("predictiveops.role") == "stress" and event != "stress_failure":
+            return
         state = container.attrs.get("State", {})
+        if (
+            event in {"die", "oom"}
+            and state.get("ExitCode") == 0
+            and not state.get("OOMKilled")
+            and not state.get("Error")
+        ):
+            return
         finished = state.get("FinishedAt") or datetime.now(UTC).isoformat()
         name = container.name
-        service = container.labels.get("com.docker.compose.service")
+        service = labels.get("com.docker.compose.service")
         logs = container.logs(tail=250, timestamps=True).decode("utf-8", errors="replace")
         report = {
             "incident_id": f"{container.id[:12]}-{finished}",
