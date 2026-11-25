@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import time
 from datetime import UTC, datetime
@@ -92,20 +93,34 @@ def _container_payload(container) -> dict:
     container.reload()
     state = container.attrs.get("State", {})
     labels = container.labels or {}
-    return {
+    is_stress = labels.get("predictiveops.stress") == "true"
+    payload = {
         "id": container.id,
         "short_id": container.short_id,
         "name": container.name,
-        "service": labels.get("com.docker.compose.service", "stress-test" if labels.get("predictiveops.stress") else "—"),
+        "service": labels.get("com.docker.compose.service", "stress-test" if is_stress else "—"),
         "status": container.status,
         "state": state.get("Status", container.status),
         "exit_code": state.get("ExitCode"),
         "oom_killed": bool(state.get("OOMKilled")),
         "started_at": state.get("StartedAt"),
         "finished_at": state.get("FinishedAt"),
-        "stress_test": labels.get("predictiveops.stress") == "true",
+        "stress_test": is_stress,
         "managed": _managed(container),
     }
+    if is_stress:
+        try:
+            log_text = container.logs(stdout=True, stderr=True, tail=100).decode("utf-8", "replace")
+            counts = re.findall(r"SIMULATED_USERS_STARTED=(\\d+)", log_text)
+            payload["simulated_users_started"] = int(counts[-1]) if counts else 0
+            payload["stress_result"] = (
+                "running" if container.status == "running"
+                else "crashed" if state.get("OOMKilled") or (state.get("ExitCode") not in (0, None))
+                else "completed"
+            )
+        except DockerException:
+            payload["simulated_users_started"] = 0
+    return payload
 
 
 @router.get("/containers")
@@ -204,7 +219,8 @@ def start_stress_test(payload: dict) -> dict:
     worker = r"""
 import multiprocessing as mp, os, time
 def user_worker():
-    block = bytearray(2 * 1024 * 1024)
+    block = bytearray(4 * 1024 * 1024)
+    for page in range(0, len(block), 4096): block[page] = 1
     n = 0
     end = time.time() + DURATION
     while time.time() < end:
@@ -216,15 +232,21 @@ if __name__ == '__main__':
     deadline = time.time() + DURATION
     for _ in range(MAX_PROCESSES):
         if time.time() >= deadline: break
-        p = mp.Process(target=user_worker)
-        p.start()
-        workers.append(p)
+        try:
+            p = mp.Process(target=user_worker)
+            p.start()
+            workers.append(p)
+            print("SIMULATED_USERS_STARTED=" + str(len(workers)), flush=True)
+        except (OSError, MemoryError) as exc:
+            print("SPAWN_LIMIT_REACHED=" + repr(exc), flush=True)
+            break
         time.sleep(0.25)
     while time.time() < deadline and any(p.is_alive() for p in workers):
         time.sleep(1)
     for p in workers:
         if p.is_alive(): p.terminate()
         p.join(timeout=2)
+    print("STRESS_TEST_COMPLETED_USERS=" + str(len(workers)), flush=True)
 """
     worker = worker.replace("DURATION", str(duration)).replace("MAX_PROCESSES", str(max_processes))
     try:
