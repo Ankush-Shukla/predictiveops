@@ -41,7 +41,10 @@ def _model_payload(p: Predictor) -> dict:
 def ready(state: ApiState = Depends(get_state)):
     """Readiness requires every configured production prediction scope to be qualified."""
     if state.settings.env == "production":
-        for scope in ("host", "application"):
+        required_scopes = ["host"]
+        if state.settings.prometheus_application_service_list:
+            required_scopes.append("application")
+        for scope in required_scopes:
             predictor = state.scope_predictors.get(scope)
             reason = production_model_block_reason(state, predictor, expected_scope=scope)
             if reason is not None:
@@ -51,7 +54,7 @@ def ready(state: ApiState = Depends(get_state)):
                     "data_source": predictor.bundle.metadata.get("data_source") if predictor else None,
                 })
         return {"status": "ready", "models": {
-            scope: state.scope_predictors[scope].version for scope in ("host", "application")
+            scope: state.scope_predictors[scope].version for scope in required_scopes
         }}
     reason = production_model_block_reason(state)
     if reason is not None:
@@ -96,6 +99,59 @@ def sources(request: Request) -> dict:
     if poller is None:
         return {"prometheus": {"enabled": False}}
     return {"prometheus": {"enabled": True, "step_seconds": poller.step, "services": poller.status}}
+
+
+@router.get("/v1/experimental/host/prediction", tags=["experimental"])
+def experimental_host_prediction(state: ApiState = Depends(get_state)) -> dict:
+    """Score buffered live host telemetry with an isolated synthetic-trained model.
+
+    Observational only: it does not update production predictions, readiness, alerts,
+    policy state or remediation.
+    """
+    predictor = state.experimental_host_predictor
+    if predictor is None:
+        return {"status": "model_unavailable", "scope": "host",
+                "disclaimer": "No experimental host model is installed."}
+
+    series_id = f"host:{state.settings.prometheus_host_series_id}"
+    with state.lock:
+        buffer = state.buffers.get(series_id)
+        frame = buffer.frame() if buffer is not None else None
+
+    buffered = len(frame) if frame is not None else 0
+    if frame is None or buffered < predictor.required_history:
+        return {
+            "status": "warming_up", "scope": "host", "series_id": series_id,
+            "model_version": predictor.version, "data_source": "synthetic",
+            "buffered_samples": buffered,
+            "required_history_minutes": predictor.required_history,
+            "disclaimer": "Synthetic-trained experimental model; live host telemetry is being buffered.",
+        }
+
+    scored = predictor.predict_recent(frame, buffered - predictor.required_history + 1)
+    if not scored:
+        return {"status": "warming_up", "scope": "host", "series_id": series_id,
+                "buffered_samples": buffered, "required_history_minutes": predictor.required_history}
+    latest = scored[-1]
+    state.collectors.predictions.labels(source="experimental_host").inc()
+    gates = predictor.bundle.metadata.get("evaluation", {}).get("gates", {})
+    disclaimer = (
+        "EXPERIMENTAL: synthetic host-fault training data applied to live host metrics. "
+        "Not production-qualified; no alerts or remediation are triggered."
+    )
+    return {
+        "status": "scored", "scope": "host", "series_id": series_id,
+        "model_version": latest.model_version, "data_source": "synthetic",
+        "probability": latest.probability, "threshold": latest.threshold,
+        "predicted_failure": latest.predicted_failure,
+        "horizon_minutes": latest.horizon_minutes, "as_of": latest.as_of,
+        "buffered_samples": buffered, "required_history_minutes": predictor.required_history,
+        "history": [{"as_of": item.as_of, "probability": item.probability} for item in scored],
+        "metrics": {name: float(frame.iloc[-1][name]) for name in predictor.metric_columns},
+        "quality_gates_passed": gates.get("passed") is True,
+        "evaluation": predictor.bundle.metadata.get("evaluation", {}),
+        "disclaimer": disclaimer,
+    }
 
 
 @router.get("/v1/live-forecast", tags=["predictions"])
