@@ -8,9 +8,9 @@ tightly constrained remediation, gates model promotion in CI, and judges canary 
 with the same model.
 
 > **Production safety:** synthetic data is for development and CI only. Production inference rejects synthetic-only
-> models and models without passing evaluation gates. These controls are **not** evidence of production accuracy; only evaluation on reviewed real incidents can establish that. A production deployment requires two separately trained
-> models and reviewed incident labels: one for host metrics and one for application metrics. Until both are
-> available, `/ready` returns HTTP 503 and the dashboard reports the exact blocker. See
+> models and models without passing evaluation gates. These controls are **not** evidence of production accuracy; only evaluation on reviewed real incidents can establish that. A production deployment requires a separately trained host model and, when application targets are configured,
+> a separately trained application model, each backed by reviewed real incident labels. Until every configured
+> scope is available and passes its gates, `/ready` returns HTTP 503 and the dashboard reports the exact blocker. See
 > [the production telemetry contract](docs/production-telemetry.md).
 
 ## How it fits together
@@ -266,8 +266,8 @@ application instrumentation still require an end-to-end run on the target server
 ## Known limitations and release blockers
 
 - Real, reviewed, labelled host and application datasets have not yet been supplied. Production
-  readiness deliberately remains HTTP 503 until both models are trained from non-synthetic data
-  and pass their evaluation gates.
+  readiness deliberately remains HTTP 503 until the host model and every configured application model are trained
+  from non-synthetic data and pass their evaluation gates.
 - Each application must expose the documented request counter and latency histogram, and its
   container must carry the `predictiveops.service` label. Uninstrumented applications are not
   eligible for application-level inference.
