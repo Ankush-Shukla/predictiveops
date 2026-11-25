@@ -112,7 +112,7 @@ def experimental_host_prediction(state: ApiState = Depends(get_state)) -> dict:
         return {"status": "warming_up", "scope": "host", "series_id": series_id,
                 "buffered_samples": buffered, "required_history_minutes": predictor.required_history}
     latest = scored[-1]
-    state.collectors.predictions.labels(source="experimental_host").inc(len(scored))
+    state.collectors.predictions.labels(source="experimental_host").inc()
     return {
         "status": "scored", "scope": "host", "series_id": series_id,
         "model_version": latest.model_version, "data_source": "synthetic",
