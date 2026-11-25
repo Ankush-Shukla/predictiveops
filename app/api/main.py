@@ -13,7 +13,17 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.errors import register_error_handlers
 from app.api.poller import PrometheusPoller
-from app.api.routers import canary, history, load_testing, log_stream, operations, policy, predict, simulate, system
+from app.api.routers import (
+    canary,
+    history,
+    load_testing,
+    log_stream,
+    operations,
+    policy,
+    predict,
+    simulate,
+    system,
+)
 from app.api.state import ApiState
 from app.core.config import Settings, get_settings
 from app.core.domain import APPLICATION_METRIC_COLUMNS, HOST_METRIC_COLUMNS

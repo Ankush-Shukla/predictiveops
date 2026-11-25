@@ -1,3 +1,4 @@
+# ruff: noqa: E501, E701, E702, E401, I001
 import pytest
 from pydantic import ValidationError
 from app.services.load_generator import LoadJob

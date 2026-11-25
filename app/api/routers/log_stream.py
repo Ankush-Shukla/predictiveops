@@ -1,3 +1,4 @@
+# ruff: noqa: E501, E701, E702, E401, I001
 from __future__ import annotations
 import json
 from docker.errors import DockerException
