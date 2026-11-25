@@ -467,6 +467,7 @@ function ExperimentalHostPanel({data}:{data:AnyRecord | null}) {
             <Detail label="Host series" value={data.series_id}/>
             <Detail label="Model version" value={data.model_version}/>
             <Detail label="Model training data" value={data.data_source}/>
+            <Detail label="Synthetic held-out gates" value={data.quality_gates_passed ? "Passed" : "Not passed"}/>
             <Detail label="Required history" value={`${data.required_history_minutes} minutes`}/>
             <Detail label="Latest scored at" value={time(data.as_of)}/>
           </div>
