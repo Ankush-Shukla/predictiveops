@@ -84,11 +84,15 @@ function App() {
 
   const refreshOperations = useCallback(async () => {
     try {
-      const [containerResult, incidentResult] = await Promise.all([
-        get("/v1/ops/containers"), get("/v1/ops/incidents?limit=100")
+      const [containerResult, incidentResult, stressResult] = await Promise.all([
+        get("/v1/ops/containers"),
+        get("/v1/ops/incidents?limit=100"),
+        get("/v1/ops/stress?limit=1"),
       ]);
       setManagedContainers(containerResult.containers ?? []);
       setIncidents(incidentResult.incidents ?? []);
+      const latestRun = stressResult.runs?.[0];
+      if (latestRun) setStressRun({ ...latestRun, run_id: latestRun.id });
       setOpsError(containerResult.error ?? null);
       const selected = selectedLogContainer || containerResult.containers?.[0]?.id || "";
       if (selected && selected !== selectedLogContainer) setSelectedLogContainer(selected);
