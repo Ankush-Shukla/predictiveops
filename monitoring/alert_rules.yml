@@ -14,12 +14,6 @@ groups:
         labels: { severity: critical }
         annotations:
           summary: "Sustained failure risk for {{ $labels.series_id }} (policy level {{ $value }})"
-      - alert: PredictiveOpsModelMissing
-        expr: absent(predictiveops_model_scope_info{scope="host"}) or absent(predictiveops_model_scope_info{scope="application"})
-        for: 1m
-        labels: { severity: warning }
-        annotations:
-          summary: "PredictiveOps host or application model scope is not loaded"
       - alert: PredictiveOpsSourceMissing
         expr: up{job=~"node-exporter|cadvisor"} == 0
         for: 2m
