@@ -181,14 +181,16 @@ def managed_containers():
 
 @router.post("/containers/{container_id}/{action}")
 def container_action(container_id: str, action: str):
-    if action not in {"restart", "stop", "kill"}:
-        raise HTTPException(status_code=400, detail="Action must be restart, stop, or kill")
+    if action not in {"start", "restart", "stop", "kill"}:
+        raise HTTPException(status_code=400, detail="Action must be start, restart, stop, or kill")
     _, container = _find_container(container_id)
     service = container.labels.get("com.docker.compose.service")
     if service == "api":
         raise HTTPException(status_code=409, detail="The API container cannot control itself")
     try:
-        if action == "restart":
+        if action == "start":
+            container.start()
+        elif action == "restart":
             container.restart(timeout=5)
         elif action == "stop":
             container.stop(timeout=5)
