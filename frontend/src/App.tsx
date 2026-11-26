@@ -444,6 +444,7 @@ function App() {
                 <div className="model-version"><div className="model-icon"><Cpu size={20}/></div><div><b>{primaryModel?.model_type ?? "Live host capacity forecast"}</b><span>{modelVersionLabel}</span></div><span className={isReady ? "status-pill success" : "status-pill muted"}>{isReady ? "ML READY" : "FORECASTING"}</span></div>
                 <Detail label="Host model" value={hostModel?.version ?? hostModel?.status ?? "Not configured"}/>
                 <Detail label="Application model" value={applicationModel?.version ?? applicationModel?.status ?? "Not configured"}/>
+                <Detail label="Experimental host model" value={data.model?.experimental_host?.version ?? data.model?.experimental_host?.status ?? "Not configured"}/>
                 <Detail label="Forecast engine" value={data.model?.forecast_engine?.status === "available" ? "Available · 30 min horizon" : "Live telemetry engine"}/>
                 <Detail label="Decision threshold" value={primaryModel?.threshold !== undefined ? pretty(primaryModel.threshold) : "Not applicable"}/>
                 <Detail label="Required history" value={primaryModel?.required_history_minutes ? `${primaryModel.required_history_minutes} minutes` : "30 minutes for capacity forecast"}/>
