@@ -109,16 +109,10 @@ function App() {
       const latestRun = stressResult.runs?.[0];
       if (latestRun) setStressRun({ ...latestRun, run_id: latestRun.id });
       setOpsError(containerResult.error ?? null);
-      const selected = selectedLogContainer || containerResult.containers?.[0]?.id || "";
-      if (selected && selected !== selectedLogContainer) setSelectedLogContainer(selected);
-      if (selected) {
-        const logResult = await get(`/v1/ops/containers/${selected}/logs?tail=300`);
-        setLiveLogs(logResult.logs ?? "");
-      }
     } catch (error) {
       setOpsError(error instanceof Error ? error.message : String(error));
     }
-  }, [selectedLogContainer]);
+  }, []);
 
   useEffect(() => {
     void refreshOperations();
@@ -514,7 +508,7 @@ function App() {
               <ContainerTable rows={containerRows}/>
             </section>
             <section className="panel full-panel">
-              <PanelTitle title="Container controls" subtitle="Restart, stop, kill and inspect logs for this PredictiveOps stack"/>
+              <PanelTitle title="Container controls" subtitle="Control allowlisted services across Docker Compose projects and inspect their logs"/>
               {opsError && <div className="notice warning"><AlertTriangle size={15}/><div><b>Docker control unavailable</b><span>{opsError}</span></div></div>}
               <ManagedContainerTable rows={managedContainers} onAction={runContainerAction} onLogs={loadContainerLogs}/>
             </section>
@@ -695,10 +689,10 @@ function formatBytes(value: number | null | undefined) {
 function formatRate(value: number | null | undefined) { return value === null || value === undefined ? "—" : formatBytes(value) + "/s"; }
 function ContainerTable({rows}:{rows:AnyRecord[]}) {
   if (!rows.length) return <EmptyState icon={<Server/>} title="No container metrics yet" text="Check cAdvisor health and its Prometheus scrape target. Containers appear when cAdvisor exports resource metrics."/>;
-  return <div className="table-scroll"><table><thead><tr><th>CONTAINER</th><th>COMPOSE SERVICE</th><th>CPU CORES</th><th>HOST CPU %</th><th>MEMORY WORKING SET</th><th>NETWORK RX</th><th>NETWORK TX</th></tr></thead><tbody>{rows.map(row=><tr key={row.name}><td><span className="service-name"><span className="service-dot"/>{row.name}</span></td><td>{row.service ?? "—"}</td><td>{row.cpu_cores === null ? "—" : Number(row.cpu_cores).toFixed(3)}</td><td>{row.cpu_pct === null ? "—" : Number(row.cpu_pct).toFixed(2) + "%"}</td><td>{formatBytes(row.memory_bytes)}</td><td>{formatRate(row.network_rx_bytes_s)}</td><td>{formatRate(row.network_tx_bytes_s)}</td></tr>)}</tbody></table></div>;
+  return <div className="table-scroll"><table><thead><tr><th>CONTAINER</th><th>COMPOSE SERVICE</th><th>CPU CORES</th><th>HOST CPU %</th><th>MEMORY WORKING SET</th><th>NETWORK RX</th><th>NETWORK TX</th></tr></thead><tbody>{rows.map(row=><tr key={row.name}><td><span className="service-name"><span className="service-dot"/>{row.name}</span></td><td>{row.service ?? "—"}</td><td>{row.cpu_cores == null ? "—" : Number(row.cpu_cores).toFixed(3)}</td><td>{row.cpu_pct == null ? "—" : Number(row.cpu_pct).toFixed(2) + "%"}</td><td>{formatBytes(row.memory_bytes)}</td><td>{formatRate(row.network_rx_bytes_s)}</td><td>{formatRate(row.network_tx_bytes_s)}</td></tr>)}</tbody></table></div>;
 }
 function ManagedContainerTable({rows,onAction,onLogs}:{rows:AnyRecord[];onAction:(id:string,action:string)=>void;onLogs:(id:string)=>void}) {
-  if (!rows.length) return <EmptyState icon={<Server/>} title="No managed containers found" text="The API needs access to the Docker socket and the PredictiveOps Compose project." />;
+  if (!rows.length) return <EmptyState icon={<Server/>} title="No managed containers found" text="Add Docker container names or Compose service names to PREDICTIVEOPS_MANAGED_CONTAINER_NAMES." />;
   return <div className="table-scroll"><table><thead><tr><th>CONTAINER</th><th>SERVICE</th><th>PROJECT</th><th>STATUS</th><th>LAST EXIT</th><th>CONTROLS</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}>
     <td><span className="service-name">{row.name}</span><small className="container-id">{row.short_id}</small></td><td>{row.service}</td>
     <td><small className="container-id">{row.project ?? "predictiveops"}</small></td>
