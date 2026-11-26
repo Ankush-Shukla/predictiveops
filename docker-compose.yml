@@ -116,11 +116,8 @@ services:
     image: prom/prometheus:v3.5.0
     command:
       - --config.file=/etc/prometheus/prometheus.yml
-      - --config.expand-env
       - --storage.tsdb.retention.time=30d
       - --web.enable-lifecycle
-    environment:
-      TAILSCALE_IP: ${TAILSCALE_IP:?set TAILSCALE_IP in .env}
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/targets:/etc/prometheus/targets:ro
@@ -149,8 +146,8 @@ services:
       - --path.rootfs=/host
       - --path.procfs=/host/proc
       - --path.sysfs=/host/sys
-      - --web.listen-address=${TAILSCALE_IP:?set TAILSCALE_IP in .env}:9100
-    network_mode: host
+      - --web.listen-address=:9100
+    expose: ["9100"]
     pid: host
     volumes:
       - /:/host:ro,rslave
