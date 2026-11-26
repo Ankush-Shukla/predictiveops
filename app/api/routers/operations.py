@@ -63,13 +63,23 @@ def _project_container(container):
     return container.labels.get("com.docker.compose.project") == PROJECT
 
 
+def _is_managed_container(container, allowed_names: set[str] | None = None) -> bool:
+    """Allow PredictiveOps containers plus explicitly allowlisted external services."""
+    if _project_container(container):
+        return True
+    allowed = allowed_names or set()
+    service = container.labels.get("com.docker.compose.service", "")
+    name = (container.name or "").lstrip("/")
+    return bool(name in allowed or service in allowed)
+
+
 def _capture_incident(
     path: Path, container_id: str, event: str = "die",
-    event_data: dict | None = None,
+    event_data: dict | None = None, allowed_names: set[str] | None = None,
 ) -> None:
     try:
         container = _client().containers.get(container_id)
-        if not _project_container(container):
+        if not _is_managed_container(container, allowed_names):
             return
         container.reload()
         labels = container.labels
@@ -229,7 +239,7 @@ def _capture_incident(
     except (DockerException, NotFound, OSError, sqlite3.Error) as exc:
         log.warning("incident capture failed for %s: %s", container_id[:12], exc)
 
-def start_event_watcher(path: Path) -> None:
+def start_event_watcher(path: Path, allowed_names: set[str] | None = None) -> None:
     key = str(path)
     if key in WATCHERS and WATCHERS[key][1].is_alive():
         return
@@ -248,7 +258,7 @@ def start_event_watcher(path: Path) -> None:
                     actor = event.get("Actor", {}).get("ID")
                     action = event.get("Action", event.get("status", "die"))
                     if actor:
-                        _capture_incident(path, actor, action, event)
+                        _capture_incident(path, actor, action, event, allowed_names)
             except DockerException as exc:
                 log.warning("Docker event stream unavailable: %s", exc)
                 stop.wait(5)
@@ -317,34 +327,41 @@ class StressRequest(BaseModel):
     duration_seconds: int = Field(default=30, ge=5, le=60)
 
 
-def _find_container(container_id: str):
+def _find_container(container_id: str, state: ApiState):
     client = _client()
     try:
         container = client.containers.get(container_id)
     except NotFound:
         raise HTTPException(status_code=404, detail="Container not found") from None
-    if not _project_container(container):
-        raise HTTPException(status_code=403, detail="Only PredictiveOps project containers can be managed")
+    if not _is_managed_container(container, state.settings.managed_container_name_list):
+        raise HTTPException(status_code=403, detail="Container is not in the PredictiveOps project or configured allowlist")
     return client, container
 
 
 @router.get("/containers")
-def managed_containers():
+def managed_containers(state: ApiState = Depends(get_state)):
     try:
         client = _client()
+        allowed = state.settings.managed_container_name_list
         items = []
-        for c in client.containers.list(all=True, filters={"label": f"com.docker.compose.project={PROJECT}"}):
+        for c in client.containers.list(all=True):
             if c.labels.get("predictiveops.role") == "stress":
+                continue
+            if not _is_managed_container(c, allowed):
                 continue
             c.reload()
             st = c.attrs.get("State", {})
             service = c.labels.get("com.docker.compose.service", "—")
+            is_core = _project_container(c) and service in {"api", "prometheus", "load-generator"}
             items.append({
                 "id": c.id, "short_id": c.short_id, "name": c.name, "service": service,
+                "project": c.labels.get("com.docker.compose.project") or "external",
                 "status": c.status, "created": c.attrs.get("Created"),
                 "exit_code": st.get("ExitCode"), "oom_killed": bool(st.get("OOMKilled")),
                 "error": st.get("Error") or "",
-                "can_control": service not in {"api", "prometheus", "load-generator"},
+                "restart_count": c.attrs.get("RestartCount", 0),
+                "health": st.get("Health", {}).get("Status"),
+                "can_control": not is_core,
             })
         return {"available": True, "containers": sorted(items, key=lambda x: x["name"])}
     except DockerException as exc:
@@ -358,9 +375,9 @@ def container_action(container_id: str, action: str, state: ApiState = Depends(g
             status_code=400,
             detail="Action must be start, restart, stop, kill, pause, or unpause",
         )
-    _, container = _find_container(container_id)
+    _, container = _find_container(container_id, state)
     service = container.labels.get("com.docker.compose.service")
-    if service in {"api", "prometheus", "load-generator"}:
+    if _project_container(container) and service in {"api", "prometheus", "load-generator"}:
         raise HTTPException(status_code=409, detail="Core control-plane containers are protected")
     try:
         if action == "start":
@@ -392,8 +409,8 @@ def container_action(container_id: str, action: str, state: ApiState = Depends(g
 
 
 @router.get("/containers/{container_id}/logs")
-def container_logs(container_id: str, tail: int = 250, since: int = 0):
-    _, container = _find_container(container_id)
+def container_logs(container_id: str, tail: int = 250, since: int = 0, state: ApiState = Depends(get_state)):
+    _, container = _find_container(container_id, state)
     try:
         # Docker SDK rejects integer zero for since; None means no time filter.
         output = container.logs(tail=max(1, min(tail, 2000)),
