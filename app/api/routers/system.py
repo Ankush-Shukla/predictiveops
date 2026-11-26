@@ -67,7 +67,7 @@ def ready(state: ApiState = Depends(get_state)):
 
 def _registry_status(root, expected_scope: str) -> dict:
     """Inspect registry metadata without deserializing joblib/pickle artifacts."""
-    root = root
+    root = Path(root)
     result = {
         "scope": expected_scope,
         "status": "not_installed",
@@ -84,8 +84,11 @@ def _registry_status(root, expected_scope: str) -> dict:
         return result
     try:
         champion = json.loads(pointer.read_text(encoding="utf-8"))
+        if not isinstance(champion, dict):
+            raise ValueError("champion.json must contain a JSON object")
         version = champion.get("version")
-        if not isinstance(version, str) or not version or Path(version).name != version:
+        if (not isinstance(version, str) or not version or version in {".", ".."}
+                or Path(version).name != version or "/" in version or "\\\\" in version):
             raise ValueError("champion.json contains an invalid version")
         artifact_dir = root / version
         model_file = artifact_dir / "model.joblib"
