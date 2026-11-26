@@ -382,6 +382,7 @@ async def containers(state: ApiState = Depends(get_state)) -> dict:
                     "name": name,
                     "service": labels.get("container_label_com_docker_compose_service") or name,
                     "cpu_cores": None,
+                    "cpu_pct": None,
                     "memory_bytes": None,
                     "network_rx_bytes_s": None,
                     "network_tx_bytes_s": None,
