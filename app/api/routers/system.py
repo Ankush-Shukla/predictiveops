@@ -343,6 +343,11 @@ async def containers(state: ApiState = Depends(get_state)) -> dict:
             'sum by (name, container_label_com_docker_compose_service) '
             '(rate(container_cpu_usage_seconds_total{image!="",name!=""}[5m]))'
         ),
+        "cpu_pct": (
+            '100 * sum by (name, container_label_com_docker_compose_service) '
+            '(rate(container_cpu_usage_seconds_total{image!="",name!=""}[5m])) '
+            '/ scalar(count(node_cpu_seconds_total{mode="idle"}))'
+        ),
         "memory_bytes": (
             'sum by (name, container_label_com_docker_compose_service) '
             '(container_memory_working_set_bytes{image!="",name!=""})'
