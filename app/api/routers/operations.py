@@ -21,7 +21,12 @@ router = APIRouter(prefix="/v1/ops", tags=["container-operations"])
 log = logging.getLogger("predictiveops.operations")
 PROJECT = "predictiveops"
 STRESS_IMAGE = "python:3.12-alpine"
-STRESS_CODE = "import time\nblocks=[]\nsize=0\nwhile True:\n blocks.append(bytearray(1024*1024))\n size+=1\n if size % 4 == 0: print(f\u0027allocated_mib={size}\u0027, flush=True)\n time.sleep(.25)"
+STRESS_CODE = (
+    "import time\nblocks=[]\nsize=0\nwhile True:\n"
+    " blocks.append(bytearray(1024*1024))\n size+=1\n"
+    " if size % 4 == 0: print(f'allocated_mib={size}', flush=True)\n"
+    " time.sleep(.25)"
+)
 WATCHERS: dict[str, tuple[threading.Event, threading.Thread]] = {}
 
 
@@ -151,11 +156,20 @@ def _capture_incident(
         elif exit_code == 139:
             diagnosis = "The process likely terminated with SIGSEGV (segmentation fault)."
         elif exit_code == 127:
-            diagnosis = "The container command was not found (exit code 127). Check the image entrypoint and command."
+            diagnosis = (
+                "The container command was not found (exit code 127). "
+                "Check the image entrypoint and command."
+            )
         elif exit_code == 126:
-            diagnosis = "The container command could not be executed (exit code 126). Check permissions and executable format."
+            diagnosis = (
+                "The container command could not be executed (exit code 126). "
+                "Check permissions and executable format."
+            )
         elif exit_code == 143:
-            diagnosis = "The process received SIGTERM. Check whether Docker, an operator or an orchestrator stopped it."
+            diagnosis = (
+                "The process received SIGTERM. Check whether Docker, an operator "
+                "or an orchestrator stopped it."
+            )
         elif exit_code not in (None, 0):
             diagnosis = (
                 f"The container process exited unsuccessfully with exit code {exit_code}. "
@@ -329,7 +343,8 @@ def managed_containers():
                 "id": c.id, "short_id": c.short_id, "name": c.name, "service": service,
                 "status": c.status, "created": c.attrs.get("Created"),
                 "exit_code": st.get("ExitCode"), "oom_killed": bool(st.get("OOMKilled")),
-                "error": st.get("Error") or "", "can_control": service != "api",
+                "error": st.get("Error") or "",
+                "can_control": service not in {"api", "prometheus", "load-generator"},
             })
         return {"available": True, "containers": sorted(items, key=lambda x: x["name"])}
     except DockerException as exc:
@@ -337,13 +352,16 @@ def managed_containers():
 
 
 @router.post("/containers/{container_id}/{action}")
-def container_action(container_id: str, action: str):
-    if action not in {"start", "restart", "stop", "kill"}:
-        raise HTTPException(status_code=400, detail="Action must be start, restart, stop, or kill")
+def container_action(container_id: str, action: str, state: ApiState = Depends(get_state)):
+    if action not in {"start", "restart", "stop", "kill", "pause", "unpause"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Action must be start, restart, stop, kill, pause, or unpause",
+        )
     _, container = _find_container(container_id)
     service = container.labels.get("com.docker.compose.service")
-    if service == "api":
-        raise HTTPException(status_code=409, detail="The API container cannot control itself")
+    if service in {"api", "prometheus", "load-generator"}:
+        raise HTTPException(status_code=409, detail="Core control-plane containers are protected")
     try:
         if action == "start":
             container.start()
@@ -351,8 +369,19 @@ def container_action(container_id: str, action: str):
             container.restart(timeout=5)
         elif action == "stop":
             container.stop(timeout=5)
-        else:
+        elif action == "kill":
             container.kill()
+        elif action == "pause":
+            container.pause()
+        else:
+            container.unpause()
+        state.store.add_audit(
+            ts=datetime.now(UTC), series_id=f"container:{container.id[:12]}",
+            action=f"container_{action}", target=container.name, outcome=action,
+            dry_run=False, probability=None, model_version=None,
+            reason="Manual container action from PredictiveOps console",
+            details={"service": service, "container_id": container.id},
+        )
         log.info(
             "container action",
             extra={"container": container.name, "service": service, "action": action},

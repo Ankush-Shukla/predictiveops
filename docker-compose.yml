@@ -71,11 +71,37 @@ services:
       PREDICTIVEOPS_REMEDIATION_ENABLED: ${PREDICTIVEOPS_REMEDIATION_ENABLED:-false}
       PREDICTIVEOPS_DRY_RUN: ${PREDICTIVEOPS_DRY_RUN:-true}
       PREDICTIVEOPS_REMEDIATION_TARGETS: '{}'
+      PREDICTIVEOPS_LOAD_GENERATOR_TOKEN: ${PREDICTIVEOPS_LOAD_GENERATOR_TOKEN:?set PREDICTIVEOPS_LOAD_GENERATOR_TOKEN in .env}
     volumes:
       - artifacts:/srv/artifacts
       - /var/run/docker.sock:/var/run/docker.sock
     group_add:
       - "${DOCKER_GID:-999}"
+    restart: unless-stopped
+
+  load-generator:
+    build: { context: ., dockerfile: docker/Dockerfile, target: runtime }
+    image: predictiveops-runtime:local
+    command: ["uvicorn", "app.services.load_generator:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      PREDICTIVEOPS_LOAD_GENERATOR_TOKEN: ${PREDICTIVEOPS_LOAD_GENERATOR_TOKEN:?set PREDICTIVEOPS_LOAD_GENERATOR_TOKEN in .env}
+    expose: ["8001"]
+    read_only: true
+    tmpfs: ["/tmp:size=16m,noexec,nosuid"]
+    pids_limit: 64
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+          pids: 64
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
     restart: unless-stopped
 
   frontend:
@@ -89,12 +115,13 @@ services:
     image: prom/prometheus:v3.5.0
     command:
       - --config.file=/etc/prometheus/prometheus.yml
+      - --config.expand-env
       - --storage.tsdb.retention.time=30d
       - --web.enable-lifecycle
     environment:
       TAILSCALE_IP: ${TAILSCALE_IP:?set TAILSCALE_IP in .env}
     volumes:
-      - ./prometheus/prometheus.server.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/targets:/etc/prometheus/targets:ro
       - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
       - prometheus-data:/prometheus

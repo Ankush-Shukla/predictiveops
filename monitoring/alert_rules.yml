@@ -39,6 +39,19 @@ groups:
         annotations:
           summary: "Application p95 latency above 500ms for {{ $labels.service }}"
 
+      - alert: ApplicationLoadTestCapacityWarning
+        expr: predictiveops_load_test_capacity_level >= 1
+        for: 0m
+        labels: { severity: warning, scope: application-load-test }
+        annotations:
+          summary: "Load test indicates degraded capacity for {{ $labels.service }}"
+      - alert: ApplicationLoadTestCapacityCritical
+        expr: predictiveops_load_test_capacity_level >= 2
+        for: 0m
+        labels: { severity: critical, scope: application-load-test }
+        annotations:
+          summary: "Load test reached a critical capacity boundary for {{ $labels.service }}"
+
       - alert: PredictiveOpsStressCapacityReached
         expr: increase(predictiveops_stress_worker_failures_total[5m]) > 0
         for: 0m

@@ -48,7 +48,8 @@ def test_default_stack_is_safe_by_default():
     env = SVC["api"]["environment"]
     assert env["PREDICTIVEOPS_REMEDIATION_ENABLED"].endswith(":-false}")
     assert env["PREDICTIVEOPS_DRY_RUN"].endswith(":-true}")
-    assert not any("docker.sock" in str(v) for s in SVC.values() for v in s.get("volumes", []))
+    assert any("docker.sock" in str(v) for v in SVC["api"]["volumes"])
+    assert not any("docker.sock" in str(v) for v in SVC["load-generator"].get("volumes", []))
     override = load("docker-compose.remediation.yml")["services"]["api"]
     assert any("docker.sock" in v for v in override["volumes"])
     assert override["environment"]["PREDICTIVEOPS_DRY_RUN"] == "false"  # only the opt-in file goes live
@@ -76,7 +77,13 @@ def test_production_api_does_not_auto_train_or_promote_synthetic_models():
 def test_prometheus_scrapes_host_and_discovered_application_targets():
     prom = load("prometheus/prometheus.yml")
     jobs = {j["job_name"]: j for j in prom["scrape_configs"]}
-    assert {"node-exporter", "cadvisor", "applications", "predictiveops-api"} <= set(jobs)
+    assert {
+        "node-exporter",
+        "cadvisor",
+        "applications",
+        "predictiveops-api",
+        "predictiveops-load-generator",
+    } <= set(jobs)
     assert not any("demo" in name for name in jobs)
     env = SVC["api"]["environment"]
     assert env["PREDICTIVEOPS_PROMETHEUS_HOST_SERIES_ID"].endswith(":-home-server}")
@@ -84,10 +91,10 @@ def test_prometheus_scrapes_host_and_discovered_application_targets():
     assert "api:8000" in jobs["predictiveops-api"]["static_configs"][0]["targets"]
     assert jobs["node-exporter"]["static_configs"][0]["targets"] == ["${TAILSCALE_IP}:9100"]
     assert (
-        "./prometheus/prometheus.server.yml:/etc/prometheus/prometheus.yml:ro"
+        "./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro"
         in SVC["prometheus"]["volumes"]
     )
-    assert "--config.expand-env" not in SVC["prometheus"]["command"]
+    assert "--config.expand-env" in SVC["prometheus"]["command"]
     assert SVC["node-exporter"]["network_mode"] == "host"
     assert "--path.procfs=/host/proc" in SVC["node-exporter"]["command"]
     assert "--path.sysfs=/host/sys" in SVC["node-exporter"]["command"]
@@ -97,7 +104,13 @@ def test_prometheus_scrapes_host_and_discovered_application_targets():
     assert jobs["applications"]["file_sd_configs"][0]["files"] == ["/etc/prometheus/targets/*.yml"]
     assert "./prometheus/targets:/etc/prometheus/targets:ro" in SVC["prometheus"]["volumes"]
     rules = load("monitoring/alert_rules.yml")["groups"][0]["rules"]
-    assert {r["alert"] for r in rules} >= {"PredictedFailure", "PolicyAlertLevel", "PredictiveOpsStressCapacityReached"}
+    assert {r["alert"] for r in rules} >= {
+        "PredictedFailure",
+        "PolicyAlertLevel",
+        "PredictiveOpsStressCapacityReached",
+        "ApplicationLoadTestCapacityWarning",
+        "ApplicationLoadTestCapacityCritical",
+    }
 
 def test_grafana_provisioning_consistent():
     ds = load("grafana/provisioning/datasources/prometheus.yml")["datasources"][0]
