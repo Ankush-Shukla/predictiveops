@@ -150,7 +150,10 @@ def create_app(settings: Settings | None = None, predictor: Predictor | None = N
         operations.recover_interrupted_stress_runs(
             settings.sqlite_path.with_name("operations.sqlite3"), app.state.api.store
         )
-        operations.start_event_watcher(settings.sqlite_path.with_name('operations.sqlite3'))
+        operations.start_event_watcher(
+            settings.sqlite_path.with_name('operations.sqlite3'),
+            settings.managed_container_name_list,
+        )
         yield
         operations.stop_event_watcher(settings.sqlite_path.with_name('operations.sqlite3'))
         for poller in pollers:
