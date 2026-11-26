@@ -217,7 +217,7 @@ starts after the decision is promoted.** Use `{"min_observation_minutes": 60}` o
 |---|---|
 | Core | `ENV`, `LOG_LEVEL`, `LOG_JSON`, `DATA_DIR`, `SQLITE_PATH`, `MODEL_DIR`, `HORIZON_MINUTES` (15-30), `SYNTHETIC_SEED`, `INGEST_BUFFER_MINUTES` |
 | MLflow and gates | `MLFLOW_TRACKING_URI`, `MLFLOW_EXPERIMENT`, `MLFLOW_MODEL_NAME`, `GATE_MIN_F1` (0.70), `GATE_MAX_FPR` (0.05) |
-| Security | `API_KEY` (protects write endpoints when set; empty values are ignored) |
+| Security and Docker operations | `API_KEY` (when configured for protected writes), `MANAGED_CONTAINER_NAMES` (comma-separated container names or Compose service labels allowed in the console) |
 | Prometheus polling | `PROMETHEUS_ENABLED`, `PROMETHEUS_URL`, `PROMETHEUS_HOST_SERIES_ID`, `PROMETHEUS_APPLICATION_SERVICES`, `PROMETHEUS_STEP_SECONDS`, `PROMETHEUS_POLL_SECONDS`, `PROMETHEUS_LOOKBACK_STEPS` |
 | Policy and remediation | `POLICY_SUSTAIN_ALERT`, `POLICY_SUSTAIN_REMEDIATE`, `POLICY_REMEDIATE_THRESHOLD`, `REMEDIATION_ENABLED`, `DRY_RUN`, `REMEDIATION_TARGETS` (JSON), `REMEDIATION_COOLDOWN_SECONDS`, `MAX_ACTIONS_PER_HOUR` |
 | Development compatibility | `PROMETHEUS_SERVICES` (legacy combined-model polling; never use in production) |
