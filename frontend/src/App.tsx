@@ -314,18 +314,21 @@ function App() {
   const containerCount = containerRows.length;
   const containerCpu = containerRows.length && containerRows.every(row => typeof row.cpu_cores === "number")
     ? containerRows.reduce((sum, row) => sum + row.cpu_cores, 0) : null;
+  const containerCpuPct = containerRows.length && containerRows.every(row => typeof row.cpu_pct === "number")
+    ? containerRows.reduce((sum, row) => sum + row.cpu_pct, 0) : null;
   const containerMemory = containerRows.length && containerRows.every(row => typeof row.memory_bytes === "number")
     ? containerRows.reduce((sum, row) => sum + row.memory_bytes, 0) : null;
   const alertCount = data.alerts.length;
   const remediation = data.policy?.config ?? {};
   const containerChartData = useMemo(() => containerRows
-    .filter(row => typeof row.memory_bytes === "number" && typeof row.cpu_cores === "number")
-    .sort((a, b) => b.memory_bytes - a.memory_bytes)
+    .filter(row => typeof row.memory_bytes === "number" && typeof row.cpu_cores === "number" && typeof row.cpu_pct === "number")
+    .sort((a, b) => b.cpu_pct - a.cpu_pct)
     .slice(0, 10)
     .map(row => ({
-      name: row.service ?? row.name,
+      name: row.service && row.service !== "—" ? row.service : row.name,
       memoryMiB: Number((row.memory_bytes / (1024 * 1024)).toFixed(1)),
       cpuCores: Number(row.cpu_cores.toFixed(3)),
+      cpuPct: Number(row.cpu_pct.toFixed(2)),
     })), [containerRows]);
 
   const activePage = (next: string) => setPage(next);
@@ -408,7 +411,7 @@ function App() {
               <div className="panel risk-panel">
                 <PanelTitle
                   title="Live container resource usage"
-                  subtitle="Top 10 containers by memory · refreshed every 10 seconds"
+                  subtitle="Top 10 containers by CPU share of total host capacity · refreshed every 10 seconds"
                 />
                 {containerChartData.length ? (
                   <div className="chart-wrap">
@@ -417,17 +420,17 @@ function App() {
                         <CartesianGrid stroke="#202a39" vertical={false}/>
                         <XAxis dataKey="name" tick={{fill:"#8491a4",fontSize:10}} axisLine={false} tickLine={false}/>
                         <YAxis yAxisId="memory" tick={{fill:"#8491a4",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v => `${v} MB`}/>
-                        <YAxis yAxisId="cpu" orientation="right" tick={{fill:"#8491a4",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v => `${v}`}/>
+                        <YAxis yAxisId="cpu" orientation="right" domain={[0, "auto"]} tick={{fill:"#8491a4",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`}/>
                         <Tooltip
                           contentStyle={{background:"#111925",border:"1px solid #2a3749",borderRadius:9,color:"#e7edf6"}}
                           formatter={(value, name) => [
-                            name === "Memory" ? `${value} MiB` : `${value} CPU cores`,
+                            name === "Memory" ? `${value} MiB` : name === "CPU" ? `${value}% host capacity` : `${value} CPU cores`,
                             name
                           ]}
                         />
                         <Legend wrapperStyle={{fontSize:11,color:"#aab6c8"}}/>
                         <Bar yAxisId="memory" dataKey="memoryMiB" name="Memory" fill="#4f8cff" fillOpacity={0.75} radius={[4,4,0,0]}/>
-                        <Line yAxisId="cpu" type="monotone" dataKey="cpuCores" name="CPU" stroke="#36c9a0" strokeWidth={2} dot={{r:3}}/>
+                        <Line yAxisId="cpu" type="monotone" dataKey="cpuPct" name="CPU" stroke="#36c9a0" strokeWidth={2} dot={{r:3}}/>
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
@@ -436,7 +439,7 @@ function App() {
                 )}
                 <div className="chart-foot">
                   <span><i className="legend-dot blue"/>Memory working set (MiB)</span>
-                  <span>CPU consumption (cores)</span>
+                  <span>CPU share of host capacity (%)</span>
                 </div>
               </div>
               <div className="panel model-panel">
@@ -501,7 +504,7 @@ function App() {
           {page === "Containers" && <>
             <section className="stat-grid container-summary">
               <StatCard icon={<Server/>} label="RUNNING CONTAINERS" value={String(containerCount)} detail={data.containerStatus?.available ? "Reporting through cAdvisor" : "Waiting for cAdvisor metrics"} tone="blue"/>
-              <StatCard icon={<Cpu/>} label="TOTAL CPU" value={containerCpu === null ? "—" : containerCpu.toFixed(2) + " cores"} detail="Aggregate container CPU consumption" tone="green"/>
+              <StatCard icon={<Cpu/>} label="TOTAL CONTAINER CPU" value={containerCpuPct === null ? "—" : containerCpuPct.toFixed(1) + "%"} detail={containerCpu === null ? "Share of total host CPU capacity" : `${containerCpu.toFixed(2)} core-equivalents · host-normalized`} tone="green"/>
               <StatCard icon={<Activity/>} label="MEMORY WORKING SET" value={formatBytes(containerMemory)} detail="Sum of container working sets" tone="amber"/>
               <StatCard icon={<Zap/>} label="TELEMETRY" value={data.containerStatus?.available ? "Live" : "Unavailable"} detail="Prometheus · cAdvisor · 15s scrape" tone={data.containerStatus?.available ? "green" : "amber"}/>
             </section>
@@ -692,13 +695,14 @@ function formatBytes(value: number | null | undefined) {
 function formatRate(value: number | null | undefined) { return value === null || value === undefined ? "—" : formatBytes(value) + "/s"; }
 function ContainerTable({rows}:{rows:AnyRecord[]}) {
   if (!rows.length) return <EmptyState icon={<Server/>} title="No container metrics yet" text="Check cAdvisor health and its Prometheus scrape target. Containers appear when cAdvisor exports resource metrics."/>;
-  return <div className="table-scroll"><table><thead><tr><th>CONTAINER</th><th>COMPOSE SERVICE</th><th>CPU CORES</th><th>MEMORY WORKING SET</th><th>NETWORK RX</th><th>NETWORK TX</th></tr></thead><tbody>{rows.map(row=><tr key={row.name}><td><span className="service-name"><span className="service-dot"/>{row.name}</span></td><td>{row.service ?? "—"}</td><td>{row.cpu_cores === null ? "—" : Number(row.cpu_cores).toFixed(3)}</td><td>{formatBytes(row.memory_bytes)}</td><td>{formatRate(row.network_rx_bytes_s)}</td><td>{formatRate(row.network_tx_bytes_s)}</td></tr>)}</tbody></table></div>;
+  return <div className="table-scroll"><table><thead><tr><th>CONTAINER</th><th>COMPOSE SERVICE</th><th>CPU CORES</th><th>HOST CPU %</th><th>MEMORY WORKING SET</th><th>NETWORK RX</th><th>NETWORK TX</th></tr></thead><tbody>{rows.map(row=><tr key={row.name}><td><span className="service-name"><span className="service-dot"/>{row.name}</span></td><td>{row.service ?? "—"}</td><td>{row.cpu_cores === null ? "—" : Number(row.cpu_cores).toFixed(3)}</td><td>{row.cpu_pct === null ? "—" : Number(row.cpu_pct).toFixed(2) + "%"}</td><td>{formatBytes(row.memory_bytes)}</td><td>{formatRate(row.network_rx_bytes_s)}</td><td>{formatRate(row.network_tx_bytes_s)}</td></tr>)}</tbody></table></div>;
 }
 function ManagedContainerTable({rows,onAction,onLogs}:{rows:AnyRecord[];onAction:(id:string,action:string)=>void;onLogs:(id:string)=>void}) {
   if (!rows.length) return <EmptyState icon={<Server/>} title="No managed containers found" text="The API needs access to the Docker socket and the PredictiveOps Compose project." />;
-  return <div className="table-scroll"><table><thead><tr><th>CONTAINER</th><th>SERVICE</th><th>STATUS</th><th>LAST EXIT</th><th>CONTROLS</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}>
+  return <div className="table-scroll"><table><thead><tr><th>CONTAINER</th><th>SERVICE</th><th>PROJECT</th><th>STATUS</th><th>LAST EXIT</th><th>CONTROLS</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}>
     <td><span className="service-name">{row.name}</span><small className="container-id">{row.short_id}</small></td><td>{row.service}</td>
-    <td><span className={`status-pill ${row.status === "running" ? "success" : "danger"}`}>{row.status}</span></td>
+    <td><small className="container-id">{row.project ?? "predictiveops"}</small></td>
+    <td><span className={`status-pill ${row.status === "running" ? "success" : "danger"}`}>{row.status}</span>{row.health && <small className="container-id">Health: {row.health}</small>}</td>
     <td>{row.exit_code ?? "—"}{row.oom_killed ? " · OOM" : ""}</td>
     <td className="container-actions"><button onClick={()=>onLogs(row.id)} title="View logs"><Terminal size={13}/>Logs</button>
       {row.can_control && <>{row.status !== "running" && row.status !== "paused" && <button onClick={()=>onAction(row.id,"start")} title="Start"><Play size={13}/>Start</button>}{row.status === "running" && <><button onClick={()=>onAction(row.id,"pause")} title="Pause"><Square size={12}/>Pause</button><button onClick={()=>onAction(row.id,"restart")} title="Restart"><RotateCcw size={13}/>Restart</button><button onClick={()=>onAction(row.id,"stop")} title="Stop"><Square size={12}/>Stop</button><button className="danger-action" onClick={()=>onAction(row.id,"kill")} title="Kill"><Skull size={13}/>Kill</button></>}{row.status === "paused" && <button onClick={()=>onAction(row.id,"unpause")} title="Resume"><Play size={13}/>Resume</button>}</>}
