@@ -116,7 +116,7 @@ function App() {
 
   useEffect(() => {
     void refreshOperations();
-    const timer = window.setInterval(() => void refreshOperations(), 5000);
+    const timer = window.setInterval(() => void refreshOperations(), 10000);
     return () => window.clearInterval(timer);
   }, [refreshOperations]);
 
@@ -139,6 +139,11 @@ function App() {
       setLiveLogs(error instanceof Error ? error.message : String(error));
     }
   }, []);
+
+  useEffect(() => {
+    if (page !== "Live logs" || selectedLogContainer || !managedContainers.length) return;
+    void loadContainerLogs(managedContainers[0].id);
+  }, [page, selectedLogContainer, managedContainers, loadContainerLogs]);
 
   const runContainerAction = useCallback(async (id: string, action: string) => {
     if (!window.confirm(`Are you sure you want to ${action} this container?`)) return;
