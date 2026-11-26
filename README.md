@@ -135,8 +135,28 @@ Prometheus application targets are discovered from the mounted
 telemetry. Application latency and error-rate alerts use the standard
 `predictiveops_app_*` metric contract.
 
-Remediation stays disabled and dry-run by default. Do not mount the Docker socket or enable
-live remediation until its target allowlist and action path have been reviewed.
+Remediation stays disabled and dry-run by default.
+
+### Container operations from the console
+
+The Containers, Live logs and Crash reports views can inspect the PredictiveOps Compose
+project and explicitly allowlisted external containers. Set
+`PREDICTIVEOPS_MANAGED_CONTAINER_NAMES` in `.env` to comma-separated Docker container names
+or Compose service labels, for example:
+
+```dotenv
+PREDICTIVEOPS_MANAGED_CONTAINER_NAMES=jellyfin,jellyseerr,sonarr,radarr,prowlarr,bazarr,qbittorrent,navidrome
+```
+
+The API lists only PredictiveOps project containers and names/services in this allowlist.
+Manual start, stop, restart, pause and resume actions are audited; core PredictiveOps
+control-plane containers are protected. Docker `die` and OOM events for these containers
+are captured with exit metadata and the available stdout/stderr tail.
+
+The API requires access to `/var/run/docker.sock` for these operations. Docker socket
+access is effectively host-administrator access: keep the console bound to a trusted
+private interface (the Compose example uses the Tailscale address), do not expose it
+directly to the public internet, and keep the external-container allowlist narrow.
 
 ## API in brief
 
@@ -146,6 +166,11 @@ live remediation until its target allowlist and action path have been reviewed.
 | `GET /v1/model` | Model metadata; production returns separate host and application models |
 | `GET /v1/sources` | Prometheus source and per-scope poller status |
 | `GET /v1/live-forecast` | Live 15/30-minute host resource guardrail forecast from Node Exporter telemetry |
+| `GET /v1/containers` | cAdvisor container resource inventory with host-normalized CPU share |
+| `GET /v1/ops/containers` | PredictiveOps and explicitly allowlisted Docker container inventory |
+| `POST /v1/ops/containers/{id}/{action}` | Audited manual container lifecycle action |
+| `GET /v1/ops/containers/{id}/logs` and `/logs/stream` | Container log tail and live log stream |
+| `GET /v1/ops/incidents` | Captured Docker exit and OOM crash reports |
 | `GET /v1/experimental/host/prediction` | Experimental synthetic-trained scorer for live host telemetry; observational only |
 | `GET /v1/series[/{id}]` | Buffered time series and latest prediction state |
 | `GET /v1/alerts`, `GET /v1/audit`, `GET /v1/policy` | Alert history, audit log and policy state |
