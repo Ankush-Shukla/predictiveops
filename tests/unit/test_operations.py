@@ -30,11 +30,43 @@ def test_stress_workers_are_hidden_from_managed_inventory(monkeypatch):
     normal = FakeContainer("a", {**compose, "com.docker.compose.service": "api"})
     stress = FakeContainer("b", {**compose, "predictiveops.role": "stress"})
     monkeypatch.setattr(operations, "_client", lambda: FakeClient([normal, stress]))
+    state = SimpleNamespace(settings=SimpleNamespace(managed_container_name_list=set()))
 
-    result = operations.managed_containers()
+    result = operations.managed_containers(state)
 
     assert result["available"] is True
     assert [row["name"] for row in result["containers"]] == ["a"]
+
+
+def test_allowlisted_external_container_is_visible_and_controllable(monkeypatch):
+    media = FakeContainer("jellyfin", {
+        "com.docker.compose.project": "media",
+        "com.docker.compose.service": "jellyfin",
+    })
+    monkeypatch.setattr(operations, "_client", lambda: FakeClient([media]))
+    state = SimpleNamespace(settings=SimpleNamespace(managed_container_name_list={"jellyfin"}))
+
+    result = operations.managed_containers(state)
+
+    assert result["available"] is True
+    assert len(result["containers"]) == 1
+    assert result["containers"][0]["name"] == "jellyfin"
+    assert result["containers"][0]["project"] == "media"
+    assert result["containers"][0]["can_control"] is True
+
+
+def test_external_container_is_not_visible_without_allowlist(monkeypatch):
+    media = FakeContainer("jellyfin", {
+        "com.docker.compose.project": "media",
+        "com.docker.compose.service": "jellyfin",
+    })
+    monkeypatch.setattr(operations, "_client", lambda: FakeClient([media]))
+    state = SimpleNamespace(settings=SimpleNamespace(managed_container_name_list=set()))
+
+    result = operations.managed_containers(state)
+
+    assert result["available"] is True
+    assert result["containers"] == []
 
 
 def test_startup_cleanup_removes_only_labeled_stress_workers(monkeypatch):
