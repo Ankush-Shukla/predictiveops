@@ -352,7 +352,9 @@ def managed_containers(state: ApiState = Depends(get_state)):
             c.reload()
             st = c.attrs.get("State", {})
             service = c.labels.get("com.docker.compose.service", "—")
-            is_core = _project_container(c) and service in {"api", "prometheus", "load-generator"}
+            is_core = _project_container(c) and service in {
+                "api", "prometheus", "load-generator", "frontend", "grafana", "node-exporter", "cadvisor"
+            }
             items.append({
                 "id": c.id, "short_id": c.short_id, "name": c.name, "service": service,
                 "project": c.labels.get("com.docker.compose.project") or "external",
@@ -377,7 +379,9 @@ def container_action(container_id: str, action: str, state: ApiState = Depends(g
         )
     _, container = _find_container(container_id, state)
     service = container.labels.get("com.docker.compose.service")
-    if _project_container(container) and service in {"api", "prometheus", "load-generator"}:
+    if _project_container(container) and service in {
+        "api", "prometheus", "load-generator", "frontend", "grafana", "node-exporter", "cadvisor"
+    }:
         raise HTTPException(status_code=409, detail="Core control-plane containers are protected")
     try:
         if action == "start":
