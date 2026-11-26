@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 from datetime import UTC, datetime
 
@@ -63,12 +64,103 @@ def ready(state: ApiState = Depends(get_state)):
     return {"status": "ready", "model_version": state.predictor.version}
 
 
+def _registry_status(root, expected_scope: str) -> dict:
+    """Inspect registry metadata without deserializing joblib/pickle artifacts."""
+    root = root
+    result = {
+        "scope": expected_scope,
+        "status": "not_installed",
+        "version": None,
+        "data_source": None,
+        "trained_at": None,
+        "threshold": None,
+        "n_features": None,
+        "evaluation": None,
+        "reason": "No champion model is installed for this scope.",
+    }
+    pointer = root / "champion.json"
+    if not pointer.exists():
+        return result
+    try:
+        champion = json.loads(pointer.read_text(encoding="utf-8"))
+        version = champion.get("version")
+        if not isinstance(version, str) or not version or Path(version).name != version:
+            raise ValueError("champion.json contains an invalid version")
+        artifact_dir = root / version
+        model_file = artifact_dir / "model.joblib"
+        if not model_file.is_file():
+            result.update(status="artifact_missing", version=version,
+                          reason="Champion pointer exists, but model.joblib is missing.")
+            return result
+        meta_path = artifact_dir / "metadata.json"
+        metadata = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+        if not isinstance(metadata, dict):
+            raise ValueError("metadata.json must contain a JSON object")
+        result.update(
+            status="installed_unloaded",
+            version=version,
+            data_source=metadata.get("data_source"),
+            trained_at=metadata.get("trained_at"),
+            threshold=metadata.get("threshold"),
+            n_features=len(metadata.get("feature_names", [])) if isinstance(metadata.get("feature_names"), list) else None,
+            evaluation=metadata.get("evaluation"),
+            reason="Artifact exists on disk but was not loaded by the API. Check startup logs and schema compatibility.",
+        )
+        if metadata.get("scope") not in (None, expected_scope):
+            result.update(status="rejected", reason="Model metadata scope does not match this registry.")
+        return result
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        result.update(status="invalid_registry", reason=f"Registry metadata is invalid: {exc}")
+        return result
+
+
 @router.get("/v1/model", tags=["model"])
 def model_info(state: ApiState = Depends(get_state)) -> dict:
+    """Return model runtime state plus safe on-disk diagnostics for every scope."""
     if state.settings.env == "production":
-        return {"models": {scope: _model_payload(p)
-                           for scope, p in sorted(state.scope_predictors.items())}}
-    return _model_payload(get_predictor_from_state(state))
+        models = {}
+        for scope in ("host", "application"):
+            predictor = state.scope_predictors.get(scope)
+            if predictor is not None:
+                payload = _model_payload(predictor)
+                payload.update(status="ready", reason=None)
+                models[scope] = payload
+            else:
+                models[scope] = _registry_status(state.settings.model_dir / scope, scope)
+        experimental = state.experimental_host_predictor
+        experimental_payload = (_model_payload(experimental) if experimental else
+                                 _registry_status(state.settings.model_dir / "experimental-host", "host"))
+        experimental_payload["status"] = "ready" if experimental else experimental_payload["status"]
+        return {
+            "models": models,
+            "experimental_host": experimental_payload,
+            "forecast_engine": {
+                "name": "Live host capacity forecast",
+                "status": "available",
+                "method": "Theil-Sen trend projection with operational guardrails",
+                "history_required_minutes": 30,
+                "horizon_minutes": 30,
+                "output_type": "capacity pressure and threshold crossings, not failure probability",
+            },
+        }
+
+    predictor = state.predictor
+    if predictor is not None:
+        payload = _model_payload(predictor)
+        payload.update(status="ready", reason=None)
+    else:
+        payload = _registry_status(state.settings.model_dir, "combined")
+    return {
+        "models": {"combined": payload},
+        "forecast_engine": {
+            "name": "Live host capacity forecast",
+            "status": "available",
+            "method": "Theil-Sen trend projection with operational guardrails",
+            "history_required_minutes": 30,
+            "horizon_minutes": 30,
+            "output_type": "capacity pressure and threshold crossings, not failure probability",
+        },
+    }
 
 
 def get_predictor_from_state(state: ApiState) -> Predictor:
