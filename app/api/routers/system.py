@@ -88,7 +88,7 @@ def _registry_status(root, expected_scope: str) -> dict:
             raise ValueError("champion.json must contain a JSON object")
         version = champion.get("version")
         if (not isinstance(version, str) or not version or version in {".", ".."}
-                or Path(version).name != version or "/" in version or "\\\\" in version):
+                or Path(version).name != version or "/" in version or "\\" in version):
             raise ValueError("champion.json contains an invalid version")
         artifact_dir = root / version
         model_file = artifact_dir / "model.joblib"
