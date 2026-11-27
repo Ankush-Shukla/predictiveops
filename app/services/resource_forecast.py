@@ -43,7 +43,7 @@ def project_resource_points(
     result: dict[str, Any] = {
         "status": "warming_up",
         "required_samples": REQUIRED_SAMPLES,
-        "samples_available": len(ordered),
+        "samples_available": min(len(ordered), REQUIRED_SAMPLES),
         "horizon_minutes": horizon_minutes,
         "forecast_points": [],
         "metrics": {},
