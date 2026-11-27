@@ -87,13 +87,17 @@ def project_resource_points(
         return result
 
     anchor = float(ordered[-1]["t"])
-    result["forecast_points"] = [
-        {
+    result["forecast_points"] = []
+    for index in range(horizon_minutes + 1):
+        point = {
             "t": anchor + index * STEP_SECONDS,
             **{f"{metric}_forecast": values[index] for metric, values in forecasts.items()},
         }
-        for index in range(horizon_minutes + 1)
-    ]
+        if index == 0:
+            # Include the last measured values at the forecast boundary so solid and
+            # dotted chart series meet at the same timestamp without implying a gap.
+            point.update({metric: values[0] for metric, values in forecasts.items()})
+        result["forecast_points"].append(point)
     result["metrics"] = {
         metric: {
             "current": values[0],
