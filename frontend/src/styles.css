@@ -84,3 +84,10 @@
 .forecast-toolbar select{min-width:260px;max-width:100%;padding:9px 10px;border:1px solid #2b3a4e;border-radius:7px;background:#111b28;color:#e7edf6;font-size:11px}
 .forecast-samples{font-size:9px;color:#8794a7}
 @media(max-width:700px){.forecast-toolbar{align-items:stretch;flex-direction:column}.forecast-toolbar label,.forecast-toolbar select{width:100%;min-width:0}}
+
+.forecast-kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0 0 14px}
+.forecast-kpis>div{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:11px 13px;border:1px solid var(--line);border-radius:8px;background:#0d1520}
+.forecast-kpis span{font-size:8px;font-weight:800;letter-spacing:.8px;color:#8794a7}
+.forecast-kpis b{font-size:16px;color:#e7edf6}
+.forecast-kpis small{font-size:9px;color:#45c49a}
+@media(max-width:700px){.forecast-kpis{grid-template-columns:1fr}}
