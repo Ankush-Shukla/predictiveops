@@ -67,7 +67,11 @@ def project_resource_points(
             metric_status[metric] = "warming_up"
             continue
         timestamps = [item[0] for item in valid]
-        if any(abs((right - left) - STEP_SECONDS) > 2 for left, right in zip(timestamps, timestamps[1:], strict=False)):
+        has_sample_gap = any(
+            abs((right - left) - STEP_SECONDS) > 2
+            for left, right in zip(timestamps, timestamps[1:], strict=False)
+        )
+        if has_sample_gap:
             metric_status[metric] = "warming_up"
             continue
 
