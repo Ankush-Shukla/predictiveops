@@ -5,7 +5,7 @@ import {
   RefreshCw, Server, ShieldCheck, ShieldAlert, Zap, FileText, ScrollText, Terminal, Play, RotateCcw, Square, Skull,
 } from "lucide-react";
 import {
-  Area, AreaChart, Bar, CartesianGrid, ComposedChart, Legend, Line,
+  Area, AreaChart, Bar, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 
@@ -55,6 +55,8 @@ function App() {
   const [stressDuration, setStressDuration] = useState(30);
   const [rangeMinutes, setRangeMinutes] = useState(60);
   const [history, setHistory] = useState<AnyRecord | null>(null);
+  const [containerForecasts, setContainerForecasts] = useState<AnyRecord[]>([]);
+  const [selectedForecastContainer, setSelectedForecastContainer] = useState("");
   const [infraAlerts, setInfraAlerts] = useState<AnyRecord | null>(null);
   const [coverage, setCoverage] = useState<AnyRecord | null>(null);
   const [managedContainers, setManagedContainers] = useState<AnyRecord[]>([]);
@@ -81,14 +83,20 @@ function App() {
   const [logSearch, setLogSearch] = useState("");
 
   const refreshLive = useCallback(async () => {
-    const [nextHistory, nextAlerts, nextCoverage] = await Promise.all([
+    const [nextHistory, nextAlerts, nextCoverage, nextContainerForecasts] = await Promise.all([
       get(`/v1/host/history?minutes=${rangeMinutes}`).catch(() => null),
       get("/v1/infra/alerts").catch(() => null),
       get("/v1/telemetry/coverage").catch(() => null),
+      get("/v1/containers/forecast").catch(() => null),
     ]);
     setHistory(nextHistory);
     setInfraAlerts(nextAlerts);
     setCoverage(nextCoverage);
+    const forecastRows: AnyRecord[] = nextContainerForecasts?.containers ?? [];
+    setContainerForecasts(forecastRows);
+    setSelectedForecastContainer(current =>
+      current && forecastRows.some(row => row.name === current) ? current : (forecastRows[0]?.name ?? "")
+    );
   }, [rangeMinutes]);
 
   useEffect(() => {
@@ -245,6 +253,33 @@ function App() {
     () => (history?.points ?? []).map((point: AnyRecord) => ({ ...point, time: point.t * 1000 })),
     [history],
   );
+  const hostChartData = useMemo(() => {
+    const byTime = new Map<number, AnyRecord>();
+    historyData.forEach(point => byTime.set(point.time, { ...point }));
+    (history?.forecast_points ?? []).forEach((point: AnyRecord) => {
+      const timestamp = Number(point.t) * 1000;
+      const merged = byTime.get(timestamp) ?? { time: timestamp };
+      Object.entries(point).forEach(([key, value]) => { if (key !== "t") merged[key] = value; });
+      byTime.set(timestamp, merged);
+    });
+    return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+  }, [historyData, history?.forecast_points]);
+  const selectedContainerForecast = containerForecasts.find(row => row.name === selectedForecastContainer)
+    ?? containerForecasts[0] ?? null;
+  const containerForecastChartData = useMemo(() => {
+    if (!selectedContainerForecast) return [];
+    const byTime = new Map<number, AnyRecord>();
+    (selectedContainerForecast.points ?? []).forEach((point: AnyRecord) => {
+      byTime.set(Number(point.t) * 1000, { ...point, time: Number(point.t) * 1000 });
+    });
+    (selectedContainerForecast.forecast_points ?? []).forEach((point: AnyRecord) => {
+      const timestamp = Number(point.t) * 1000;
+      const merged = byTime.get(timestamp) ?? { time: timestamp };
+      Object.entries(point).forEach(([key, value]) => { if (key !== "t") merged[key] = value; });
+      byTime.set(timestamp, merged);
+    });
+    return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+  }, [selectedContainerForecast]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -388,14 +423,15 @@ function App() {
                   <button key={minutes} type="button" className={rangeMinutes === minutes ? "range-tab active" : "range-tab"} onClick={() => setRangeMinutes(minutes)}>{label}</button>
                 ))}
               </div>
+              <div className="forecast-legend"><span><i className="forecast-solid"/>Measured telemetry</span><span><i className="forecast-dotted"/>20-minute projection</span><span className="forecast-now">NOW marks the forecast boundary</span></div>
               {history?.available ? (
                 <div className="metric-grid">
-                  <MetricChart title="CPU utilisation" unit="%" data={historyData} latest={history.latest} domain={[0, 100]} series={[{ key: "cpu_pct", name: "CPU", color: "#5c96ff" }]}/>
-                  <MetricChart title="Memory used" unit="%" data={historyData} latest={history.latest} domain={[0, 100]} series={[{ key: "memory_pct", name: "Memory", color: "#45c49a" }]}/>
-                  <MetricChart title="Disk I/O utilisation" unit="%" data={historyData} latest={history.latest} domain={[0, 100]} series={[{ key: "disk_io_util_pct", name: "Disk I/O", color: "#e8b45b" }]}/>
-                  <MetricChart title="Network (physical NICs)" unit=" Mbps" data={historyData} latest={history.latest} series={[{ key: "network_rx_mbps", name: "Receive", color: "#5c96ff" }, { key: "network_tx_mbps", name: "Transmit", color: "#f07878" }]}/>
-                  <MetricChart title="Load average (1m)" unit="" data={historyData} latest={history.latest} series={[{ key: "load1", name: "Load", color: "#b794f6" }]}/>
-                  <MetricChart title="Root filesystem used" unit="%" data={historyData} latest={history.latest} domain={[0, 100]} series={[{ key: "root_disk_used_pct", name: "Root disk", color: "#f0a36b" }]}/>
+                  <MetricChart title="CPU utilisation" unit="%" data={hostChartData} latest={history.latest} domain={[0, 100]} forecastStart={Number(history?.forecast_anchor_timestamp) * 1000} series={[{ key: "cpu_pct", name: "CPU", color: "#5c96ff", forecastKey: "cpu_pct_forecast" }]}/>
+                  <MetricChart title="Memory used" unit="%" data={hostChartData} latest={history.latest} domain={[0, 100]} forecastStart={Number(history?.forecast_anchor_timestamp) * 1000} series={[{ key: "memory_pct", name: "Memory", color: "#45c49a", forecastKey: "memory_pct_forecast" }]}/>
+                  <MetricChart title="Disk I/O utilisation" unit="%" data={hostChartData} latest={history.latest} domain={[0, 100]} forecastStart={Number(history?.forecast_anchor_timestamp) * 1000} series={[{ key: "disk_io_util_pct", name: "Disk I/O", color: "#e8b45b", forecastKey: "disk_io_util_pct_forecast" }]}/>
+                  <MetricChart title="Network (physical NICs)" unit=" Mbps" data={hostChartData} latest={history.latest} forecastStart={Number(history?.forecast_anchor_timestamp) * 1000} series={[{ key: "network_rx_mbps", name: "Receive", color: "#5c96ff", forecastKey: "network_rx_mbps_forecast" }, { key: "network_tx_mbps", name: "Transmit", color: "#f07878", forecastKey: "network_tx_mbps_forecast" }]}/>
+                  <MetricChart title="Load average (1m)" unit="" data={hostChartData} latest={history.latest} forecastStart={Number(history?.forecast_anchor_timestamp) * 1000} series={[{ key: "load1", name: "Load", color: "#b794f6", forecastKey: "load1_forecast" }]}/>
+                  <MetricChart title="Root filesystem used" unit="%" data={hostChartData} latest={history.latest} domain={[0, 100]} forecastStart={Number(history?.forecast_anchor_timestamp) * 1000} series={[{ key: "root_disk_used_pct", name: "Root disk", color: "#f0a36b", forecastKey: "root_disk_used_pct_forecast" }]}/>
                 </div>
               ) : (
                 <EmptyState icon={<Activity/>} title="No host telemetry yet" text={history?.error ? `Prometheus query failed: ${history.error}` : "Waiting for Node Exporter samples from Prometheus."}/>
@@ -513,6 +549,31 @@ function App() {
               <ContainerTable rows={containerRows}/>
             </section>
             <section className="panel full-panel">
+              <PanelTitle title="Per-container resource forecast" subtitle="Independent 20-minute CPU and memory projections from each container's cAdvisor history"/>
+              {containerForecasts.length ? <>
+                <div className="forecast-toolbar">
+                  <label>CONTAINER
+                    <select value={selectedContainerForecast?.name ?? ""} onChange={event => setSelectedForecastContainer(event.target.value)}>
+                      {containerForecasts.map(row => <option key={row.name} value={row.name}>{row.service} · {row.name}</option>)}
+                    </select>
+                  </label>
+                  <span className={selectedContainerForecast?.status === "ready" ? "status-pill success" : "status-pill muted"}>{selectedContainerForecast?.status ?? "warming up"}</span>
+                  <span className="forecast-samples">{selectedContainerForecast?.samples_available ?? 0}/{selectedContainerForecast?.required_samples ?? 30} one-minute samples</span>
+                </div>
+                {containerForecastChartData.length ? <div className="metric-grid">
+                  <MetricChart title="Container CPU · host capacity" unit="%" data={containerForecastChartData}
+                    latest={selectedContainerForecast?.points?.slice(-1)[0]} domain={[0, 100]}
+                    forecastStart={Number(selectedContainerForecast?.points?.slice(-1)[0]?.t) * 1000}
+                    series={[{key:"cpu_pct",name:"CPU",color:"#5c96ff",forecastKey:"cpu_pct_forecast"}]}/>
+                  <MetricChart title="Container memory working set" unit=" GiB" data={containerForecastChartData}
+                    latest={selectedContainerForecast?.points?.slice(-1)[0]}
+                    forecastStart={Number(selectedContainerForecast?.points?.slice(-1)[0]?.t) * 1000}
+                    series={[{key:"memory_gib",name:"Memory",color:"#45c49a",forecastKey:"memory_gib_forecast"}]}/>
+                </div> : <EmptyState icon={<Activity/>} title="Building container forecast history" text={selectedContainerForecast?.message ?? "Waiting for 30 contiguous one-minute cAdvisor samples."}/>}
+                <div className="model-note"><ShieldCheck size={15}/><span>Forecasts are calculated separately per container. Dotted values are projections, not actual usage; no container action is triggered.</span></div>
+              </> : <EmptyState icon={<Activity/>} title="Container forecast telemetry unavailable" text="Waiting for cAdvisor history in Prometheus."/ >}
+            </section>
+            <section className="panel full-panel">
               <PanelTitle title="Container controls" subtitle="Control allowlisted services across Docker Compose projects and inspect their logs"/>
               {opsError && <div className="notice warning"><AlertTriangle size={15}/><div><b>Docker control unavailable</b><span>{opsError}</span></div></div>}
               <ManagedContainerTable rows={managedContainers} onAction={runContainerAction} onLogs={loadContainerLogs}/>
@@ -572,10 +633,10 @@ function App() {
 const RANGES = [[15, "15m"], [60, "1h"], [360, "6h"], [1440, "24h"]] as const;
 const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-type MetricSeries = { key: string; name: string; color: string };
-function MetricChart({ title, unit, data, latest, series, domain }: {
+type MetricSeries = { key: string; name: string; color: string; forecastKey?: string };
+function MetricChart({ title, unit, data, latest, series, domain, forecastStart }: {
   title: string; unit: string; data: AnyRecord[]; latest: AnyRecord | undefined;
-  series: MetricSeries[]; domain?: [number, number];
+  series: MetricSeries[]; domain?: [number, number]; forecastStart?: number;
 }) {
   const now = series.map(item => {
     const value = latest?.[item.key];
@@ -598,6 +659,12 @@ function MetricChart({ title, unit, data, latest, series, domain }: {
             {series.map(item => (
               <Area key={item.key} type="monotone" dataKey={item.key} name={item.name} stroke={item.color} fill={item.color} fillOpacity={0.14} strokeWidth={1.6} dot={false} connectNulls={false} isAnimationActive={false}/>
             ))}
+            {series.filter(item => item.forecastKey).map(item => (
+              <Line key={item.forecastKey} type="monotone" dataKey={item.forecastKey} name={item.name + " forecast"}
+                stroke={item.color} strokeWidth={2} strokeDasharray="5 5" dot={false} activeDot={{r:3}}
+                connectNulls isAnimationActive={false}/>
+            ))}
+            {forecastStart && Number.isFinite(forecastStart) && <ReferenceLine x={forecastStart} stroke="#a5b4c7" strokeDasharray="2 4" label={{value:"NOW",fill:"#a5b4c7",fontSize:8,position:"insideTopRight"}}/>}
           </AreaChart>
         </ResponsiveContainer>
       </div>
