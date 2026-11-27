@@ -334,7 +334,10 @@ def _find_container(container_id: str, state: ApiState):
     except NotFound:
         raise HTTPException(status_code=404, detail="Container not found") from None
     if not _is_managed_container(container, state.settings.managed_container_name_list):
-        raise HTTPException(status_code=403, detail="Container is not in the PredictiveOps project or configured allowlist")
+        raise HTTPException(
+            status_code=403,
+            detail="Container is not in the PredictiveOps project or configured allowlist",
+        )
     return client, container
 
 

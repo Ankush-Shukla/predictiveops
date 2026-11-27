@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import math
-from pathlib import Path
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, Request, Response
@@ -106,9 +106,15 @@ def _registry_status(root, expected_scope: str) -> dict:
             data_source=metadata.get("data_source"),
             trained_at=metadata.get("trained_at"),
             threshold=metadata.get("threshold"),
-            n_features=len(metadata.get("feature_names", [])) if isinstance(metadata.get("feature_names"), list) else None,
+            n_features=(
+                len(metadata.get("feature_names", []))
+                if isinstance(metadata.get("feature_names"), list) else None
+            ),
             evaluation=metadata.get("evaluation"),
-            reason="Artifact exists on disk but was not loaded by the API. Check startup logs and schema compatibility.",
+            reason=(
+                "Artifact exists on disk but was not loaded by the API. "
+                "Check startup logs and schema compatibility."
+            ),
         )
         if metadata.get("scope") not in (None, expected_scope):
             result.update(status="rejected", reason="Model metadata scope does not match this registry.")
