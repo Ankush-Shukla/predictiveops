@@ -571,7 +571,7 @@ function App() {
                     series={[{key:"memory_gib",name:"Memory",color:"#45c49a",forecastKey:"memory_gib_forecast"}]}/>
                 </div> : <EmptyState icon={<Activity/>} title="Building container forecast history" text={selectedContainerForecast?.message ?? "Waiting for 30 contiguous one-minute cAdvisor samples."}/>}
                 <div className="model-note"><ShieldCheck size={15}/><span>Forecasts are calculated separately per container. Dotted values are projections, not actual usage; no container action is triggered.</span></div>
-              </> : <EmptyState icon={<Activity/>} title="Container forecast telemetry unavailable" text="Waiting for cAdvisor history in Prometheus."/ >}
+              </> : <EmptyState icon={<Activity/>} title="Container forecast telemetry unavailable" text="Waiting for cAdvisor history in Prometheus."/>}
             </section>
             <section className="panel full-panel">
               <PanelTitle title="Container controls" subtitle="Control allowlisted services across Docker Compose projects and inspect their logs"/>
