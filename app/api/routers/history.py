@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import time
-
 import math
-
-from app.services.resource_forecast import project_resource_points
+import time
 
 import httpx
 from fastapi import APIRouter, Depends, Query
@@ -23,6 +20,7 @@ from app.services.host_history import (
     pick_step,
     summarize_coverage,
 )
+from app.services.resource_forecast import project_resource_points
 
 router = APIRouter(tags=["monitoring"])
 
