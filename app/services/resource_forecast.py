@@ -55,12 +55,14 @@ def project_resource_points(
 
     forecasts: dict[str, list[float]] = {}
     metric_status: dict[str, str] = {}
+    metric_sample_counts: dict[str, int] = {}
     for metric in metrics:
         valid = [
             (float(point["t"]), float(point[metric]))
             for point in ordered if isinstance(point.get(metric), (int, float))
             and math.isfinite(float(point[metric]))
         ][-REQUIRED_SAMPLES:]
+        metric_sample_counts[metric] = len(valid)
         if len(valid) < REQUIRED_SAMPLES:
             metric_status[metric] = "warming_up"
             continue
@@ -81,6 +83,10 @@ def project_resource_points(
         forecasts[metric] = projected
         metric_status[metric] = "ready"
 
+    result["samples_available"] = (
+        min(metric_sample_counts.values()) if metric_sample_counts
+        else min(len(ordered), REQUIRED_SAMPLES)
+    )
     if not forecasts:
         result["message"] = "Waiting for 30 contiguous one-minute samples for each resource."
         result["metric_status"] = metric_status
