@@ -423,7 +423,7 @@ function App() {
                   <button key={minutes} type="button" className={rangeMinutes === minutes ? "range-tab active" : "range-tab"} onClick={() => setRangeMinutes(minutes)}>{label}</button>
                 ))}
               </div>
-              <div className="forecast-legend"><span><i className="forecast-solid"/>Measured telemetry</span><span><i className="forecast-dotted"/>20-minute projection</span><span className="forecast-now">NOW marks the forecast boundary</span></div>
+              <div className="forecast-legend"><span><i className="forecast-solid"/>Measured telemetry</span><span><i className="forecast-dotted"/>20-minute projection</span><span className="forecast-now">NOW marks the forecast boundary</span><span className="forecast-samples">History: {history?.forecast_samples_available ?? 0}/{history?.forecast_required_samples ?? 30} samples · {history?.forecast_status ?? "warming up"}</span></div>
               {history?.available ? (
                 <div className="metric-grid">
                   <MetricChart title="CPU utilisation" unit="%" data={hostChartData} latest={history.latest} domain={[0, 100]} forecastStart={Number(history?.forecast_anchor_timestamp) * 1000} series={[{ key: "cpu_pct", name: "CPU", color: "#5c96ff", forecastKey: "cpu_pct_forecast" }]}/>
@@ -559,6 +559,10 @@ function App() {
                   </label>
                   <span className={selectedContainerForecast?.status === "ready" ? "status-pill success" : "status-pill muted"}>{selectedContainerForecast?.status ?? "warming up"}</span>
                   <span className="forecast-samples">{selectedContainerForecast?.samples_available ?? 0}/{selectedContainerForecast?.required_samples ?? 30} one-minute samples</span>
+                </div>
+                <div className="forecast-kpis">
+                  <div><span>CPU NOW</span><b>{selectedContainerForecast?.metrics?.cpu_pct?.current == null ? "—" : Number(selectedContainerForecast.metrics.cpu_pct.current).toFixed(2) + "%"}</b><small>+20m {selectedContainerForecast?.metrics?.cpu_pct?.forecast == null ? "—" : Number(selectedContainerForecast.metrics.cpu_pct.forecast).toFixed(2) + "%"}</small></div>
+                  <div><span>MEMORY NOW</span><b>{selectedContainerForecast?.metrics?.memory_gib?.current == null ? "—" : Number(selectedContainerForecast.metrics.memory_gib.current).toFixed(2) + " GiB"}</b><small>+20m {selectedContainerForecast?.metrics?.memory_gib?.forecast == null ? "—" : Number(selectedContainerForecast.metrics.memory_gib.forecast).toFixed(2) + " GiB"}</small></div>
                 </div>
                 {containerForecastChartData.length ? <div className="metric-grid">
                   <MetricChart title="Container CPU · host capacity" unit="%" data={containerForecastChartData}
