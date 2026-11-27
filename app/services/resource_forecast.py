@@ -65,7 +65,7 @@ def project_resource_points(
             metric_status[metric] = "warming_up"
             continue
         timestamps = [item[0] for item in valid]
-        if any(abs((right - left) - STEP_SECONDS) > 2 for left, right in zip(timestamps, timestamps[1:])):
+        if any(abs((right - left) - STEP_SECONDS) > 2 for left, right in zip(timestamps, timestamps[1:], strict=False)):
             metric_status[metric] = "warming_up"
             continue
 
