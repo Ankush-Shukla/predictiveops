@@ -71,3 +71,16 @@
 .incident-diagnosis b{display:block;margin-bottom:4px;color:#e8b45b;font-size:9px;letter-spacing:.6px}
 .incident-logs-label{margin:14px 0 7px;color:#8794a7;font-size:9px;font-weight:800;letter-spacing:.7px}
 @media(max-width:700px){.stress-config{align-items:stretch;flex-direction:column}.stress-config label,.stress-config input{width:100%}}
+
+
+/* Forecast chart legend and per-container selector */
+.forecast-legend{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:-3px 0 13px;color:#8794a7;font-size:9px}
+.forecast-legend span{display:inline-flex;align-items:center;gap:7px}
+.forecast-solid,.forecast-dotted{display:inline-block;width:22px;height:0;border-top:2px solid #8aa5c7}
+.forecast-dotted{border-top-style:dashed;border-color:#45c49a}
+.forecast-now{color:#aab6c8}
+.forecast-toolbar{display:flex;align-items:flex-end;gap:13px;flex-wrap:wrap;margin:0 0 14px}
+.forecast-toolbar label{display:grid;gap:6px;color:#aab6c8;font-size:9px;font-weight:800;letter-spacing:.7px}
+.forecast-toolbar select{min-width:260px;max-width:100%;padding:9px 10px;border:1px solid #2b3a4e;border-radius:7px;background:#111b28;color:#e7edf6;font-size:11px}
+.forecast-samples{font-size:9px;color:#8794a7}
+@media(max-width:700px){.forecast-toolbar{align-items:stretch;flex-direction:column}.forecast-toolbar label,.forecast-toolbar select{width:100%;min-width:0}}
